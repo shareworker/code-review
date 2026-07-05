@@ -1,0 +1,17 @@
+src/
+__tests__/
+openspec/
+docs/
+.code-review/
+.devin/
+.claude/
+.windsurf/
+.agents/
+.context/
+*.test.ts
+*.md
+!README.md
+!LICENSE
+tsconfig.json
+vitest.config.ts
+CONTEXT.md

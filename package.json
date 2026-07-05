@@ -1,0 +1,58 @@
+{
+  "name": "@shareworker/code-review-mcp",
+  "version": "0.1.3",
+  "description": "MCP server exposing the deterministic engineering layer of code review as tools for host agents (Claude Code, Codex, Devin). The server never calls an LLM.",
+  "type": "module",
+  "bin": {
+    "code-review-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "prepublishOnly": "tsc && vitest run"
+  },
+  "keywords": [
+    "mcp",
+    "code-review",
+    "model-context-protocol",
+    "claude",
+    "codex",
+    "devin",
+    "ai",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shareworker/code-review-mcp.git"
+  },
+  "homepage": "https://github.com/shareworker/code-review-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/shareworker/code-review-mcp/issues"
+  },
+  "author": "shareworker",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "diff": "^7.0.0",
+    "minimatch": "^9.0.9",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^6.0.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
