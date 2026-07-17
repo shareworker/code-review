@@ -103,15 +103,19 @@ describe("uninstall", () => {
     expect(stderr).toBe("");
   });
 
-  it("leaves an unparseable JSON configuration untouched", async () => {
+  it("leaves the skill intact when its JSON configuration is unparseable", async () => {
     const cwd = join(testDir, "invalid-json");
     const configPath = join(cwd, ".devin", "config.json");
-    await mkdir(join(cwd, ".devin"), { recursive: true });
+    const skillPath = join(cwd, ".devin", "skills", "code-review", "SKILL.md");
+    await mkdir(join(cwd, ".devin", "skills", "code-review"), { recursive: true });
     await writeFile(configPath, "{ invalid json");
+    await writeFile(skillPath, "installed skill");
 
-    await runCli(cwd, "uninstall", "--agent", "devin");
+    const { stderr } = await runCli(cwd, "uninstall", "--agent", "devin");
 
     expect(await readFile(configPath, "utf8")).toBe("{ invalid json");
+    expect(await exists(skillPath)).toBe(true);
+    expect(stderr).toContain("unparseable");
   });
 
   it("rejects an unknown agent", async () => {

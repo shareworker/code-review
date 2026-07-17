@@ -162,7 +162,7 @@ function removeJsonConfig(agent: AgentConfig) {
     config = JSON.parse(fs.readFileSync(agent.configFile, "utf-8"));
   } catch {
     console.warn(`Warning: ${agent.configFile} is unparseable, leaving it unchanged.`);
-    return false;
+    return null;
   }
   if (!config?.mcpServers || typeof config.mcpServers !== "object" || !("code-review" in config.mcpServers)) return false;
 
@@ -202,6 +202,10 @@ function uninstall() {
       const configRemoved = agent.configFormat === "toml"
         ? removeTomlConfig(agent)
         : removeJsonConfig(agent);
+      if (configRemoved === null) {
+        console.error(`[${agent.name}] MCP config could not be parsed; skill left intact`);
+        continue;
+      }
       console.log(`[${agent.name}] MCP config ${configRemoved ? "removed" : "not found"}`);
 
       const skillRemoved = removeSkill(agent);
