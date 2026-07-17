@@ -61,8 +61,12 @@ To set up a specific agent only: `code-review-mcp setup --agent claude`
 Remove this package's project-local MCP entry and installed skill, while preserving other agent configuration and review rules:
 
 ```bash
+# if globally installed
 code-review-mcp uninstall
 code-review-mcp uninstall --agent devin
+
+# via npx (no global install needed)
+npx @shareworker/code-review-mcp uninstall
 ```
 
 <details>
@@ -79,7 +83,7 @@ It does not remove the agent directory, other skills, `.code-review/rules.json`,
 <details>
 <summary>Manual configuration (if you prefer)</summary>
 
-Add to your agent's MCP config (`.claude/mcp.json` / `.devin/config.json` / `.codex/config.json`):
+Add to your agent's MCP config (`.claude/mcp.json` / `.devin/config.json` / `.codex/config.toml`):
 
 ```json
 {
@@ -90,6 +94,14 @@ Add to your agent's MCP config (`.claude/mcp.json` / `.devin/config.json` / `.co
     }
   }
 }
+```
+
+For Codex (TOML format), add this section to `.codex/config.toml` instead:
+
+```toml
+[mcp_servers.code-review]
+command = "npx"
+args = ["-y", "@shareworker/code-review-mcp"]
 ```
 </details>
 
@@ -219,8 +231,12 @@ npm install -g @shareworker/code-review-mcp; code-review-mcp setup
 仅移除本包写入的项目级 MCP 配置和安装的 skill，保留其他 agent 配置与 review 规则：
 
 ```bash
+# 全局安装时
 code-review-mcp uninstall
 code-review-mcp uninstall --agent devin
+
+# 通过 npx（无需全局安装）
+npx @shareworker/code-review-mcp uninstall
 ```
 
 <details>
@@ -237,7 +253,7 @@ code-review-mcp uninstall --agent devin
 <details>
 <summary>手动配置（如果你更喜欢）</summary>
 
-将以下内容添加到 agent 的 MCP 配置（`.claude/mcp.json` / `.devin/config.json` / `.codex/config.json`）：
+将以下内容添加到 agent 的 MCP 配置（`.claude/mcp.json` / `.devin/config.json` / `.codex/config.toml`）：
 
 ```json
 {
@@ -248,6 +264,14 @@ code-review-mcp uninstall --agent devin
     }
   }
 }
+```
+
+Codex 使用 TOML 格式，请在 `.codex/config.toml` 中添加以下段落：
+
+```toml
+[mcp_servers.code-review]
+command = "npx"
+args = ["-y", "@shareworker/code-review-mcp"]
 ```
 </details>
 
