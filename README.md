@@ -56,6 +56,26 @@ It detects which agents are present (`.claude/`, `.devin/`, `.codex/`) and for e
 To set up a specific agent only: `code-review-mcp setup --agent claude`
 </details>
 
+### Uninstall
+
+Remove this package's project-local MCP entry and installed skill, while preserving other agent configuration and review rules:
+
+```bash
+code-review-mcp uninstall
+code-review-mcp uninstall --agent devin
+```
+
+<details>
+<summary>What does <code>uninstall</code> do?</summary>
+
+For each detected agent (or only the one passed via `--agent`):
+
+1. Removes the `code-review` entry from the agent's MCP config (leaves other entries intact)
+2. Deletes the installed `SKILL.md` (and the `skills/code-review` directory if it becomes empty)
+
+It does not remove the agent directory, other skills, `.code-review/rules.json`, or the npm package.
+</details>
+
 <details>
 <summary>Manual configuration (if you prefer)</summary>
 
@@ -192,6 +212,26 @@ npm install -g @shareworker/code-review-mcp; code-review-mcp setup
 2. 将 `SKILL.md` 复制到 agent 的 skill 目录
 
 仅安装指定 agent：`npx @shareworker/code-review-mcp setup --agent claude`
+</details>
+
+### 卸载
+
+仅移除本包写入的项目级 MCP 配置和安装的 skill，保留其他 agent 配置与 review 规则：
+
+```bash
+code-review-mcp uninstall
+code-review-mcp uninstall --agent devin
+```
+
+<details>
+<summary><code>uninstall</code> 做了什么？</summary>
+
+对每个检测到的 agent（或通过 `--agent` 指定的 agent）：
+
+1. 从 agent 的 MCP 配置中移除 `code-review` 条目（保留其他条目）
+2. 删除已安装的 `SKILL.md`（若 `skills/code-review` 目录因此变空则一并删除）
+
+不会删除 agent 目录、其他 skill、`.code-review/rules.json` 或 npm 包。
 </details>
 
 <details>
