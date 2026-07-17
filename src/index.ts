@@ -18,10 +18,48 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+interface AgentConfig {
+  name: string;
+  dir: string;
+  configFile: string;
+  skillDir: string;
+  configFormat: "json" | "toml";
+}
+
 const MCP_CONFIG_ENTRY = {
   command: "npx",
   args: ["-y", "@shareworker/code-review-mcp"],
 };
+
+const AGENTS: AgentConfig[] = [
+  { name: "claude", dir: ".claude", configFile: ".claude/mcp.json", skillDir: ".claude/skills/code-review", configFormat: "json" },
+  { name: "devin", dir: ".devin", configFile: ".devin/config.json", skillDir: ".devin/skills/code-review", configFormat: "json" },
+  { name: "codex", dir: ".codex", configFile: ".codex/config.toml", skillDir: ".codex/skills/code-review", configFormat: "toml" },
+];
+
+function selectAgents(defaultToAll: boolean) {
+  const agentIdx = process.argv.indexOf("--agent");
+  const agentFlag = agentIdx !== -1 && agentIdx + 1 < process.argv.length
+    ? process.argv[agentIdx + 1]
+    : null;
+  if (agentIdx !== -1 && !agentFlag) {
+    console.error("--agent requires a value (claude, devin, or codex)");
+    process.exit(1);
+  }
+
+  const selected = agentFlag
+    ? AGENTS.filter((agent) => agent.name === agentFlag)
+    : AGENTS.filter((agent) => fs.existsSync(agent.dir));
+  if (selected.length === 0 && !agentFlag && defaultToAll) {
+    console.log("No agent directories detected. Setting up for all supported agents.");
+    return [...AGENTS];
+  }
+  if (selected.length === 0 && agentFlag) {
+    console.error(`Unknown agent: ${agentFlag}. Supported: claude, devin, codex`);
+    process.exit(1);
+  }
+  return selected;
+}
 
 /**
  * `setup` subcommand: one-command install.
@@ -39,34 +77,7 @@ function setup() {
   }
   const skillContent = fs.readFileSync(skillSrc, "utf-8");
 
-  // Parse --agent flag (optional). If not given, detect all.
-  const agentIdx = process.argv.indexOf("--agent");
-  const agentFlag = agentIdx !== -1 && agentIdx + 1 < process.argv.length
-    ? process.argv[agentIdx + 1]
-    : null;
-  if (agentIdx !== -1 && !agentFlag) {
-    console.error("--agent requires a value (claude, devin, or codex)");
-    process.exit(1);
-  }
-
-  const agents = [
-    { name: "claude", dir: ".claude", configFile: ".claude/mcp.json", skillDir: ".claude/skills/code-review", configFormat: "json" as const },
-    { name: "devin", dir: ".devin", configFile: ".devin/config.json", skillDir: ".devin/skills/code-review", configFormat: "json" as const },
-    { name: "codex", dir: ".codex", configFile: ".codex/config.toml", skillDir: ".codex/skills/code-review", configFormat: "toml" as const },
-  ];
-
-  const selected = agentFlag
-    ? agents.filter((a) => a.name === agentFlag)
-    : agents.filter((a) => fs.existsSync(a.dir));
-  // If no agent dirs exist, default to all three (user can pick later).
-  if (selected.length === 0 && !agentFlag) {
-    console.log("No agent directories detected. Setting up for all supported agents.");
-    selected.push(...agents);
-  }
-  if (selected.length === 0 && agentFlag) {
-    console.error(`Unknown agent: ${agentFlag}. Supported: claude, devin, codex`);
-    process.exit(1);
-  }
+  const selected = selectAgents(true);
 
   for (const agent of selected) {
     // 1. Write MCP config.
@@ -89,14 +100,6 @@ function setup() {
 
   console.log(`\nDone! Configured ${selected.length} agent(s): ${selected.map((a) => a.name).join(", ")}`);
   console.log("Restart your agent to pick up the new MCP server.");
-}
-
-interface AgentConfig {
-  name: string;
-  dir: string;
-  configFile: string;
-  skillDir: string;
-  configFormat: "json" | "toml";
 }
 
 /**
@@ -152,6 +155,65 @@ function writeTomlConfig(agent: AgentConfig) {
   console.log(`[${agent.name}] MCP config written to ${agent.configFile}`);
 }
 
+function removeJsonConfig(agent: AgentConfig) {
+  if (!fs.existsSync(agent.configFile)) return false;
+  let config: any;
+  try {
+    config = JSON.parse(fs.readFileSync(agent.configFile, "utf-8"));
+  } catch {
+    console.warn(`Warning: ${agent.configFile} is unparseable, leaving it unchanged.`);
+    return false;
+  }
+  if (!config?.mcpServers || typeof config.mcpServers !== "object" || !("code-review" in config.mcpServers)) return false;
+
+  delete config.mcpServers["code-review"];
+  fs.writeFileSync(agent.configFile, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  return true;
+}
+
+function removeTomlConfig(agent: AgentConfig) {
+  if (!fs.existsSync(agent.configFile)) return false;
+  const existing = fs.readFileSync(agent.configFile, "utf-8");
+  const sectionRe = /\[mcp_servers\.code-review\][\s\S]*?(?=\n\[|\n$|$)/;
+  if (!sectionRe.test(existing)) return false;
+
+  fs.writeFileSync(agent.configFile, existing.replace(sectionRe, ""), "utf-8");
+  return true;
+}
+
+function removeSkill(agent: AgentConfig) {
+  const skillPath = path.join(agent.skillDir, "SKILL.md");
+  if (!fs.existsSync(skillPath)) return false;
+
+  fs.unlinkSync(skillPath);
+  if (fs.readdirSync(agent.skillDir).length === 0) fs.rmdirSync(agent.skillDir);
+  return true;
+}
+
+function uninstall() {
+  const selected = selectAgents(false);
+  if (selected.length === 0) {
+    console.log("No agent directories detected. Nothing to uninstall.");
+    return;
+  }
+
+  for (const agent of selected) {
+    try {
+      const configRemoved = agent.configFormat === "toml"
+        ? removeTomlConfig(agent)
+        : removeJsonConfig(agent);
+      console.log(`[${agent.name}] MCP config ${configRemoved ? "removed" : "not found"}`);
+
+      const skillRemoved = removeSkill(agent);
+      console.log(`[${agent.name}] Skill ${skillRemoved ? "removed" : "not found"}`);
+    } catch (err: any) {
+      console.error(`[${agent.name}] Failed to uninstall: ${err?.message ?? err}`);
+    }
+  }
+
+  console.log(`\nDone! Cleaned ${selected.length} agent(s): ${selected.map((agent) => agent.name).join(", ")}`);
+}
+
 const EXAMPLE_CONFIG = `{
   "filters": {
     "exclude": ["**/*.lock", "**/*.min.js", "**/*.map"],
@@ -203,6 +265,10 @@ if (subcommand === "setup" || subcommand === "install-skill") {
 }
 if (subcommand === "init-config") {
   initConfig();
+  process.exit(0);
+}
+if (subcommand === "uninstall") {
+  uninstall();
   process.exit(0);
 }
 
@@ -272,7 +338,7 @@ async function main() {
       {
         name: "position_comment",
         description:
-          "Locate a comment to precise line numbers. Text matching primary (hunk new-side â†?old-side â†?full file), hunk alignment fallback. Pass diff_ref from get_review_targets.",
+          "Locate a comment to precise line numbers. Text matching primary (hunk new-side ï¿½?old-side ï¿½?full file), hunk alignment fallback. Pass diff_ref from get_review_targets.",
         inputSchema: {
           type: "object",
           properties: {
