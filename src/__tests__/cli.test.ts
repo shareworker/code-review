@@ -145,7 +145,7 @@ describe("setup", () => {
     expect(await exists(skillPath)).toBe(true);
     expect(JSON.parse(await readFile(configPath, "utf8")).mcpServers["code-review"]).toEqual({
       command: "npx",
-      args: ["-y", "@shareworker/code-review-mcp"],
+      args: ["-y", "@shareworker/code-review-mcp@latest"],
     });
   });
 
@@ -161,7 +161,7 @@ describe("setup", () => {
     expect(await exists(skillPath)).toBe(true);
     expect(JSON.parse(await readFile(configPath, "utf8")).mcpServers["code-review"]).toEqual({
       command: "npx",
-      args: ["-y", "@shareworker/code-review-mcp"],
+      args: ["-y", "@shareworker/code-review-mcp@latest"],
     });
     const skillContent = await readFile(skillPath, "utf8");
     expect(skillContent.startsWith("---\n")).toBe(true);

@@ -40,7 +40,7 @@ interface AgentConfig {
 
 const MCP_CONFIG_ENTRY = {
   command: "npx",
-  args: ["-y", "@shareworker/code-review-mcp"],
+  args: ["-y", "@shareworker/code-review-mcp@latest"],
 };
 
 function isGlobal(): boolean {
