@@ -58,7 +58,7 @@ describe("uninstall", () => {
 
   it("leaves other agents untouched when --agent is supplied", async () => {
     const cwd = join(testDir, "scoped");
-    const claudeConfig = join(cwd, ".claude", "mcp.json");
+    const claudeConfig = join(cwd, ".mcp.json");
     await mkdir(join(cwd, ".claude"), { recursive: true });
     await writeFile(claudeConfig, JSON.stringify({ mcpServers: { "code-review": { command: "npx" } } }));
 
@@ -70,7 +70,8 @@ describe("uninstall", () => {
   it("removes only the code-review TOML section and keeps a nonempty skill directory", async () => {
     const cwd = join(testDir, "codex");
     const configPath = join(cwd, ".codex", "config.toml");
-    const skillDir = join(cwd, ".codex", "skills", "code-review");
+    const skillDir = join(cwd, ".agents", "skills", "code-review");
+    await mkdir(join(cwd, ".codex"), { recursive: true });
     await mkdir(skillDir, { recursive: true });
     await writeFile(configPath, [
       "[mcp_servers.keep]",
@@ -139,7 +140,7 @@ describe("setup", () => {
 
     await runCli(cwd, ["setup", "--global", "--agent", "claude"], env);
 
-    const configPath = join(fakeHome, ".claude", "mcp.json");
+    const configPath = join(fakeHome, ".claude.json");
     const skillPath = join(fakeHome, ".claude", "skills", "code-review", "SKILL.md");
     expect(await exists(configPath)).toBe(true);
     expect(await exists(skillPath)).toBe(true);
@@ -166,6 +167,10 @@ describe("setup", () => {
     const skillContent = await readFile(skillPath, "utf8");
     expect(skillContent.startsWith("---\n")).toBe(true);
     expect(skillContent).toContain("alwaysApply: false");
+    // Single frontmatter block only — no double fence from the original SKILL.md.
+    const fenceCount = skillContent.split("\n").filter((l) => l === "---").length;
+    expect(fenceCount).toBe(2);
+    expect(skillContent).toContain("# Code Review Skill");
   });
 });
 
@@ -173,9 +178,14 @@ describe("uninstall --global", () => {
   it("removes the selected agent's config and skill from user home", async () => {
     const cwd = join(testDir, "global-uninstall");
     const fakeHome = join(testDir, "global-uninstall-home");
-    const configPath = join(fakeHome, ".devin", "config.json");
-    const skillPath = join(fakeHome, ".devin", "skills", "code-review", "SKILL.md");
-    await mkdir(join(fakeHome, ".devin", "skills", "code-review"), { recursive: true });
+    // Devin global base is platform-dependent: ~/.config/devin on Linux/macOS,
+    // %APPDATA%\devin on Windows.
+    const devinBase = process.platform === "win32"
+      ? join(fakeHome, "AppData", "Roaming", "devin")
+      : join(fakeHome, ".config", "devin");
+    const configPath = join(devinBase, "config.json");
+    const skillPath = join(devinBase, "skills", "code-review", "SKILL.md");
+    await mkdir(join(devinBase, "skills", "code-review"), { recursive: true });
     await writeFile(configPath, JSON.stringify({
       mcpServers: {
         "code-review": { command: "npx", args: ["-y", "@shareworker/code-review-mcp"] },
@@ -184,7 +194,10 @@ describe("uninstall --global", () => {
     }, null, 2));
     await writeFile(skillPath, "installed skill");
     await mkdir(cwd, { recursive: true });
-    const env = { USERPROFILE: fakeHome, HOME: fakeHome };
+    const env: Record<string, string> = { USERPROFILE: fakeHome, HOME: fakeHome };
+    if (process.platform === "win32") {
+      env.APPDATA = join(fakeHome, "AppData", "Roaming");
+    }
 
     await runCli(cwd, ["uninstall", "--global", "--agent", "devin"], env);
 
@@ -192,7 +205,7 @@ describe("uninstall --global", () => {
       mcpServers: { keep: { command: "node", args: ["server.js"] } },
     });
     expect(await exists(skillPath)).toBe(false);
-    expect(await exists(join(fakeHome, ".devin", "skills", "code-review"))).toBe(false);
+    expect(await exists(join(devinBase, "skills", "code-review"))).toBe(false);
   });
 
   it("removes cursor .mdc skill and MCP config entry", async () => {

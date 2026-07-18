@@ -99,7 +99,7 @@ It does not remove the agent directory, other skills, `.code-review/rules.json`,
 <details>
 <summary>Manual configuration (if you prefer)</summary>
 
-Add to your agent's MCP config (`.claude/mcp.json` / `.cursor/mcp.json` / `.devin/config.json` / `.codex/config.toml`):
+Add to your agent's MCP config (`.mcp.json` at project root for Claude Code / `.cursor/mcp.json` / `.devin/config.json` / `.codex/config.toml`):
 
 ```json
 {
@@ -276,7 +276,7 @@ npx @shareworker/code-review-mcp@latest uninstall --global --agent devin
 <details>
 <summary>手动配置（如果你更喜欢）</summary>
 
-将以下内容添加到 agent 的 MCP 配置（`.claude/mcp.json` / `.cursor/mcp.json` / `.devin/config.json` / `.codex/config.toml`）：
+将以下内容添加到 agent 的 MCP 配置（Claude Code 为项目根目录的 `.mcp.json` / `.cursor/mcp.json` / `.devin/config.json` / `.codex/config.toml`）：
 
 ```json
 {

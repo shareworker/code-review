@@ -32,7 +32,7 @@ interface AgentConfig {
   name: string;
   dir: string;
   configFile: string;
-  skillDir: string;
+  skillDir: string | null;
   configFormat: "json" | "toml";
   skillFileName?: string;
   skillFrontmatter?: string;
@@ -43,17 +43,46 @@ const MCP_CONFIG_ENTRY = {
   args: ["-y", "@shareworker/code-review-mcp@latest"],
 };
 
+const CURSOR_SKILL_FRONTMATTER = "---\ndescription: Code review guidelines and MCP tool usage for the code-review server\nalwaysApply: false\n---\n\n";
+
 function isGlobal(): boolean {
   return process.argv.includes("--global");
 }
 
+// Devin follows XDG: ~/.config/devin on Linux/macOS, %APPDATA%\devin on Windows.
+function devinGlobalBase(): string {
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA || path.join(homedir(), "AppData", "Roaming");
+    return path.join(appdata, "devin");
+  }
+  return path.join(homedir(), ".config", "devin");
+}
+
 function getAgents(global: boolean): AgentConfig[] {
-  const base = global ? homedir() : process.cwd();
+  if (global) {
+    const home = homedir();
+    const devinBase = devinGlobalBase();
+    return [
+      // Claude Code: user-scope MCP servers live in ~/.claude.json (top-level mcpServers key).
+      { name: "claude", dir: path.join(home, ".claude"), configFile: path.join(home, ".claude.json"), skillDir: path.join(home, ".claude", "skills", "code-review"), configFormat: "json" },
+      // Cursor: global MCP config at ~/.cursor/mcp.json. Global .mdc rules are NOT loaded from
+      // ~/.cursor/rules (only project .cursor/rules is), so skillDir is null for global scope.
+      { name: "cursor", dir: path.join(home, ".cursor"), configFile: path.join(home, ".cursor", "mcp.json"), skillDir: null, configFormat: "json", skillFileName: "code-review.mdc", skillFrontmatter: CURSOR_SKILL_FRONTMATTER },
+      // Devin: user config and skills at ~/.config/devin (or %APPDATA%\devin on Windows).
+      { name: "devin", dir: devinBase, configFile: path.join(devinBase, "config.json"), skillDir: path.join(devinBase, "skills", "code-review"), configFormat: "json" },
+      // Codex: user config at ~/.codex/config.toml; skills follow the open Agent Skills standard
+      // at ~/.agents/skills (not ~/.codex/skills).
+      { name: "codex", dir: path.join(home, ".codex"), configFile: path.join(home, ".codex", "config.toml"), skillDir: path.join(home, ".agents", "skills", "code-review"), configFormat: "toml" },
+    ];
+  }
+  const base = process.cwd();
   return [
-    { name: "claude", dir: path.join(base, ".claude"), configFile: path.join(base, ".claude", "mcp.json"), skillDir: path.join(base, ".claude", "skills", "code-review"), configFormat: "json" },
-    { name: "cursor", dir: path.join(base, ".cursor"), configFile: path.join(base, ".cursor", "mcp.json"), skillDir: path.join(base, ".cursor", "rules"), configFormat: "json", skillFileName: "code-review.mdc", skillFrontmatter: "---\ndescription: Code review guidelines and MCP tool usage for the code-review server\nalwaysApply: false\n---\n\n" },
+    // Claude Code: project-scope MCP config is .mcp.json at the project root (NOT .claude/mcp.json).
+    { name: "claude", dir: path.join(base, ".claude"), configFile: path.join(base, ".mcp.json"), skillDir: path.join(base, ".claude", "skills", "code-review"), configFormat: "json" },
+    { name: "cursor", dir: path.join(base, ".cursor"), configFile: path.join(base, ".cursor", "mcp.json"), skillDir: path.join(base, ".cursor", "rules"), configFormat: "json", skillFileName: "code-review.mdc", skillFrontmatter: CURSOR_SKILL_FRONTMATTER },
     { name: "devin", dir: path.join(base, ".devin"), configFile: path.join(base, ".devin", "config.json"), skillDir: path.join(base, ".devin", "skills", "code-review"), configFormat: "json" },
-    { name: "codex", dir: path.join(base, ".codex"), configFile: path.join(base, ".codex", "config.toml"), skillDir: path.join(base, ".codex", "skills", "code-review"), configFormat: "toml" },
+    // Codex: project skills live at .agents/skills (open Agent Skills standard), not .codex/skills.
+    { name: "codex", dir: path.join(base, ".codex"), configFile: path.join(base, ".codex", "config.toml"), skillDir: path.join(base, ".agents", "skills", "code-review"), configFormat: "toml" },
   ];
 }
 
@@ -93,6 +122,22 @@ function selectAgents(defaultToAll: boolean, global: boolean) {
  *        npx @shareworker/code-review-mcp setup --global
  *        npx @shareworker/code-review-mcp setup --global --agent cursor
  */
+/**
+ * Strip a leading YAML frontmatter block (delimited by `---` lines) from a
+ * skill file. Returns the body content that follows the closing fence. If no
+ * frontmatter is present, returns the input unchanged.
+ */
+function stripFrontmatter(content: string): string {
+  if (!content.startsWith("---\n")) return content;
+  const lines = content.split("\n");
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === "---" || lines[i] === "...") {
+      return lines.slice(i + 1).join("\n");
+    }
+  }
+  return content;
+}
+
 function setup() {
   const global = isGlobal();
   const skillSrc = path.join(__dirname, "..", "skills", "code-review", "SKILL.md");
@@ -101,6 +146,10 @@ function setup() {
     process.exit(1);
   }
   const skillContent = fs.readFileSync(skillSrc, "utf-8");
+  // Body with the original SKILL.md frontmatter stripped; used when an agent
+  // supplies its own frontmatter (e.g. Cursor .mdc), so we don't end up with
+  // two consecutive frontmatter blocks in the installed file.
+  const skillBody = stripFrontmatter(skillContent);
 
   const selected = selectAgents(true, global);
 
@@ -113,12 +162,22 @@ function setup() {
       writeJsonConfig(agent);
     }
 
-    // 2. Copy skill.
+    // 2. Copy skill (skipped when skillDir is null — e.g. Cursor global, which
+    //    does not load .mdc rules from ~/.cursor/rules).
+    if (!agent.skillDir) {
+      console.log(`[${agent.name}] Skill install skipped (no global skill location for this agent)`);
+      continue;
+    }
     try {
       fs.mkdirSync(agent.skillDir, { recursive: true });
       const skillFileName = agent.skillFileName ?? "SKILL.md";
       const frontmatter = agent.skillFrontmatter ?? "";
-      fs.writeFileSync(path.join(agent.skillDir, skillFileName), frontmatter + skillContent, "utf-8");
+      // When the agent has its own frontmatter, replace the original; otherwise
+      // keep SKILL.md verbatim (it already carries valid frontmatter).
+      const content = frontmatter
+        ? frontmatter + skillBody.replace(/^\n+/, "")
+        : skillContent;
+      fs.writeFileSync(path.join(agent.skillDir, skillFileName), content, "utf-8");
       console.log(`[${agent.name}] Skill installed to ${agent.skillDir}/${skillFileName}`);
     } catch (err: any) {
       console.error(`[${agent.name}] Failed to install skill: ${err?.message ?? err}`);
@@ -209,6 +268,7 @@ function removeTomlConfig(agent: AgentConfig) {
 }
 
 function removeSkill(agent: AgentConfig) {
+  if (!agent.skillDir) return false;
   const skillFileName = agent.skillFileName ?? "SKILL.md";
   const skillPath = path.join(agent.skillDir, skillFileName);
   if (!fs.existsSync(skillPath)) return false;
