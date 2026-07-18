@@ -192,11 +192,15 @@ async function loadRulesFile(dir: string): Promise<RulesConfig | null> {
     const content = await readFile(filePath, "utf8");
     const raw = JSON.parse(content) as any;
     // Normalize: rules entries may use `path` or `pattern` — map to `pattern`.
+    // Drop entries that have neither a glob nor rule text to avoid crashes in
+    // matchPathRules and formatPromptSection.
     if (raw?.rules && Array.isArray(raw.rules)) {
-      raw.rules = raw.rules.map((r: any) => ({
-        pattern: r.pattern ?? r.path,
-        rule: r.rule,
-      }));
+      raw.rules = raw.rules
+        .filter((r: any) => (r.pattern ?? r.path) && typeof r.rule === "string")
+        .map((r: any) => ({
+          pattern: (r.pattern ?? r.path) as string,
+          rule: r.rule as string,
+        }));
     }
     return raw as RulesConfig;
   } catch (err: any) {

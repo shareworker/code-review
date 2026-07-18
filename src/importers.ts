@@ -174,8 +174,11 @@ export async function getImporters(
     }
   }
 
+  const repoPrefix = repoAbs.replace(/\\/g, "/");
   return {
     path: input.path.replace(/\\/g, "/"),
-    importers: [...importers].sort(),
+    importers: [...importers]
+      .map((imp) => imp.replace(repoPrefix, "").replace(/^\/+/, ""))
+      .sort(),
   };
 }

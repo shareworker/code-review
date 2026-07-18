@@ -4,15 +4,13 @@ import type { FileDiff, Hunk, HunkLine, HunkLineType } from "./types.js";
 const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 /**
- * Normalize a diff line: trim whitespace, strip leading +/- diff markers, trim \r.
- * Mirrors open-code-review's normalizeLine.
+ * Normalize a code/content line: trim whitespace and trailing \r.
+ * Does NOT strip leading +/- because those can be real code characters
+ * (e.g., `const x = -1;`). Diff markers are removed by parseHunkLines /
+ * parseFileDiffs before this function is called.
  */
 export function normalizeLine(line: string): string {
-  let s = line.replace(/\r$/, "");
-  s = s.trim();
-  if (s.startsWith("+")) s = s.slice(1);
-  else if (s.startsWith("-")) s = s.slice(1);
-  return s.trim();
+  return line.replace(/\r$/, "").trim();
 }
 
 /**

@@ -170,4 +170,36 @@ describe("positionComment", () => {
     expect(result.path).toBe("src/foo.ts");
     expect(result.locatedBy).toBe("text_match");
   });
+
+  it("matches against worktree content in workspace mode (diff_ref=HEAD)", async () => {
+    // Regression test: position_comment must read the worktree side of the
+    // diff, not the committed HEAD side, when diff_ref is "HEAD".
+    const wsRepo = await mkdtemp(join(tmpdir(), "ocr-pos-ws-"));
+    const git = simpleGit(wsRepo);
+    await git.init();
+    await git.addConfig("user.email", "test@test.com");
+    await git.addConfig("user.name", "Test");
+    await mkdir(join(wsRepo, "src"), { recursive: true });
+    await writeFile(join(wsRepo, "src", "foo.ts"), "export const a = 1;\n");
+    await git.add(".");
+    await git.commit("init");
+    // Uncommitted worktree change.
+    await writeFile(
+      join(wsRepo, "src", "foo.ts"),
+      ["export const a = 1;", "export const b = 20;", ""].join("\n")
+    );
+    try {
+      const result = await positionComment(wsRepo, {
+        path: "src/foo.ts",
+        content: "b should be 20",
+        existingCode: "export const b = 20;",
+        diffRef: "HEAD",
+      });
+      expect(result.path).toBe("src/foo.ts");
+      expect(result.locatedBy).toBe("text_match");
+      expect(result.startLine).toBe(2);
+    } finally {
+      await rm(wsRepo, { recursive: true, force: true });
+    }
+  });
 });

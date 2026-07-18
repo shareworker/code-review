@@ -65,7 +65,8 @@ export async function searchCode(
     // workspace mode: include untracked files in the worktree search.
     args.push("--untracked");
   }
-  args.push(query);
+  // Use -e so a query that starts with '-' is not parsed as a git grep option.
+  args.push("-e", query);
   if (searchRev !== null) {
     // revision mode: search the tree at the resolved revision.
     args.push(searchRev);

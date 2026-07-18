@@ -319,7 +319,6 @@ export interface RunAffectedTestsResult {
 export interface GetImportersInput {
   path: string;
   repo?: string;
-  diffRef?: string;
 }
 
 export interface GetImportersResult {

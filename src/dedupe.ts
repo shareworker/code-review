@@ -65,43 +65,55 @@ export function dedupeComments(
     code: normalizeCode(c.existingCode),
   }));
 
-  // Two-pass grouping:
-  //   Pass 1 — union-find style: assign each comment to a duplicate group.
-  //   Pass 2 — for each group, pick the alphabetically-first path as the
-  //            representative (kept); all others are dropped with
-  //            duplicateOf pointing at that representative.
-  // This guarantees the spec invariant: every dropped comment's duplicateOf
-  // references a comment that is in `kept[]` (no chains through dropped ones).
-  const groupOf = new Array<number>(normalized.length).fill(-1);
-  let nextGroup = 0;
+  // Build a similarity graph and group comments into connected components.
+  // This implements true transitive grouping: if A matches B and B matches C,
+  // all three are placed in the same group even when A and C are not directly
+  // similar. The previous greedy assignment under-deduplicated such chains.
+  const similar = (a: number, b: number): boolean => {
+    const sim = jaccardSimilarity(normalized[a].words, normalized[b].words);
+    if (sim < threshold) return false;
+    const codeA = normalized[a].code;
+    const codeB = normalized[b].code;
+    return (
+      codeA === codeB ||
+      (codeA.length > 0 && codeB.length > 0 &&
+        (codeA.includes(codeB) || codeB.includes(codeA)))
+    );
+  };
 
-  for (let i = 0; i < normalized.length; i++) {
-    if (groupOf[i] !== -1) continue; // already assigned
-    const group = nextGroup++;
-    groupOf[i] = group;
-    for (let j = i + 1; j < normalized.length; j++) {
-      if (groupOf[j] !== -1) continue;
-      const sim = jaccardSimilarity(normalized[i].words, normalized[j].words);
-      if (sim < threshold) continue;
-      const codeA = normalized[i].code;
-      const codeB = normalized[j].code;
-      const codeMatch =
-        codeA === codeB ||
-        (codeA.length > 0 && codeB.length > 0 &&
-          (codeA.includes(codeB) || codeB.includes(codeA)));
-      if (codeMatch) {
-        groupOf[j] = group;
+  const n = normalized.length;
+  const adj: number[][] = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (similar(i, j)) {
+        adj[i].push(j);
+        adj[j].push(i);
       }
     }
   }
 
-  // Collect members of each group.
+  // Collect connected components via DFS.
+  const groupOf = new Array<number>(n).fill(-1);
+  let nextGroup = 0;
   const groups = new Map<number, number[]>();
-  for (let i = 0; i < normalized.length; i++) {
-    const g = groupOf[i];
-    const arr = groups.get(g) ?? [];
-    arr.push(i);
-    groups.set(g, arr);
+
+  for (let i = 0; i < n; i++) {
+    if (groupOf[i] !== -1) continue;
+    const groupMembers: number[] = [];
+    const stack = [i];
+    groupOf[i] = nextGroup;
+    while (stack.length > 0) {
+      const u = stack.pop()!;
+      groupMembers.push(u);
+      for (const v of adj[u]) {
+        if (groupOf[v] === -1) {
+          groupOf[v] = nextGroup;
+          stack.push(v);
+        }
+      }
+    }
+    groups.set(nextGroup, groupMembers);
+    nextGroup++;
   }
 
   const kept: CommentForDedupe[] = [];

@@ -64,8 +64,36 @@ export async function getDiffSummary(
 }
 
 /**
- * Get the content of a file at a given ref (e.g. "HEAD", "main").
- * For untracked files, pass ref="WORKTREE" to read from the working directory.
+ * Resolve a diff_ref to the ref that contains the "after" (post-change)
+ * file content. This is the side of the diff where new/added lines live.
+ * - "HEAD" or any single ref (workspace / git-diff <ref> mode) → "WORKTREE"
+ * - "from..to" (range mode) → "to"
+ * - "commit^..commit" (commit mode) → "commit"
+ */
+export function resolvePostRef(diffRef: string): string {
+  if (diffRef === "HEAD") return "WORKTREE";
+  const rangeMatch = diffRef.match(/^(.+?)\.\.(.+)$/);
+  if (rangeMatch) return rangeMatch[2];
+  return "WORKTREE";
+}
+
+/**
+ * Resolve a diff_ref to the ref that contains the "before" (pre-change)
+ * file content.
+ * - "HEAD" or any single ref (workspace / git-diff <ref> mode) → the ref itself
+ * - "from..to" (range mode) → "from"
+ * - "commit^..commit" (commit mode) → "commit^"
+ */
+export function resolvePreRef(diffRef: string): string {
+  if (diffRef === "HEAD") return "HEAD";
+  const rangeMatch = diffRef.match(/^(.+?)\.\.(.+)$/);
+  if (rangeMatch) return rangeMatch[1];
+  return diffRef;
+}
+
+/**
+ * Get the content of a file at a given ref (e.g. "HEAD", "main", "WORKTREE").
+ * For untracked files or the current worktree, pass ref="WORKTREE".
  */
 export async function getFileContent(
   repo: string,

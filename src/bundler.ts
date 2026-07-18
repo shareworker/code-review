@@ -1,4 +1,4 @@
-import { getDiffForFileOrSynthesize, getFileContent } from "./git.js";
+import { getDiffForFileOrSynthesize, getFileContent, resolvePostRef } from "./git.js";
 import { parseFileDiffs } from "./diff-parser.js";
 import type { BundleFile, BundleReason, FileBundle, I18nKeyDiff, I18nKeyDiffEntry } from "./types.js";
 
@@ -247,7 +247,7 @@ async function computeI18nKeyDiff(
   for (const bf of files) {
     let content: string | null = null;
     try {
-      content = await getFileContent(repo, diffRef, bf.path);
+      content = await getFileContent(repo, resolvePostRef(diffRef), bf.path);
       if (!content || content.length === 0) {
         content = await getFileContent(repo, "WORKTREE", bf.path);
       }

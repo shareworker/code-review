@@ -1,4 +1,4 @@
-import { getDiffForFileOrSynthesize, getFileContent } from "./git.js";
+import { getDiffForFileOrSynthesize, getFileContent, resolvePostRef } from "./git.js";
 import { parseFileDiffs, getAddedLineNumbers, splitAndNormalize, normalizeLine } from "./diff-parser.js";
 import type { CheckResult, EvidenceRef, ReflectInput, ReflectResult } from "./types.js";
 
@@ -41,12 +41,12 @@ export async function reflectComment(
     hasDiff = false;
   }
 
-  // Read the file content (try ref first, then worktree).
-  // Note: `git show <range>:<path>` returns empty string for range refs, so
-  // we treat empty content as "not found at ref" and fall back to worktree.
+  // Read the file content at the post-change revision (right side of the diff).
+  // `git show <range>:<path>` returns empty string for range refs, so we treat
+  // empty content as "not found at ref" and fall back to worktree.
   let fileContent: string | null = null;
   try {
-    const atRef = await getFileContent(repo, diffRef, path);
+    const atRef = await getFileContent(repo, resolvePostRef(diffRef), path);
     fileContent = atRef && atRef.length > 0 ? atRef : null;
   } catch {
     fileContent = null;
@@ -154,11 +154,11 @@ async function checkEvidenceValid(
       return { name: "evidence_valid", passed: false };
     }
 
-    // Read the evidence file (ref-then-worktree fallback, same as the main file).
+    // Read the evidence file at the post-change revision (same as the main file).
     const evidencePath = entry.path.replace(/\\/g, "/");
     let content: string | null = null;
     try {
-      const atRef = await getFileContent(repo, diffRef, evidencePath);
+      const atRef = await getFileContent(repo, resolvePostRef(diffRef), evidencePath);
       content = atRef && atRef.length > 0 ? atRef : null;
     } catch {
       content = null;

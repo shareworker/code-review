@@ -334,6 +334,38 @@ describe("reflectComment", () => {
     const evidenceCheck = result.checks.find((c) => c.name === "evidence_valid");
     expect(evidenceCheck?.passed).toBe(true);
   });
+
+  it("uses worktree content in workspace mode (diff_ref=HEAD)", async () => {
+    // Regression test: ensure reflectComment reads the worktree (post-change)
+    // side, not the committed HEAD side, when diff_ref is "HEAD".
+    const wsRepo = await mkdtemp(join(tmpdir(), "ocr-reflect-ws-"));
+    const git = simpleGit(wsRepo);
+    await git.init();
+    await git.addConfig("user.email", "test@test.com");
+    await git.addConfig("user.name", "Test");
+    await mkdir(join(wsRepo, "src"), { recursive: true });
+    await writeFile(join(wsRepo, "src", "foo.ts"), "export const a = 1;\n");
+    await git.add(".");
+    await git.commit("init");
+    // Modify the worktree without committing.
+    await writeFile(
+      join(wsRepo, "src", "foo.ts"),
+      ["export const a = 1;", "export const b = 20;", ""].join("\n")
+    );
+    try {
+      const result = await reflectComment(wsRepo, {
+        path: "src/foo.ts",
+        content: "b should be 20",
+        startLine: 2,
+        endLine: 2,
+        existingCode: "export const b = 20;",
+        diffRef: "HEAD",
+      });
+      expect(result.verdict).toBe("keep");
+    } finally {
+      await rm(wsRepo, { recursive: true, force: true });
+    }
+  });
 });
 
 // Helper to stage a file in the test repo.

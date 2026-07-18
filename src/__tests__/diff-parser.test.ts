@@ -58,17 +58,16 @@ index 123..000
 `;
 
 describe("normalizeLine", () => {
-  it("trims whitespace and strips diff markers", () => {
-    expect(normalizeLine("+const a = 1;")).toBe("const a = 1;");
-    expect(normalizeLine("-const a = 1;")).toBe("const a = 1;");
-    expect(normalizeLine(" const a = 1;")).toBe("const a = 1;");
+  it("trims whitespace and trailing \\r but preserves +/- as code", () => {
     expect(normalizeLine("  const a = 1; \r")).toBe("const a = 1;");
+    expect(normalizeLine("const x = -1;")).toBe("const x = -1;");
+    expect(normalizeLine("+const a = 1;")).toBe("+const a = 1;");
   });
 });
 
 describe("splitAndNormalize", () => {
   it("splits and filters blank lines", () => {
-    const result = splitAndNormalize("+const a = 1;\n\n+const b = 2;");
+    const result = splitAndNormalize("const a = 1;\n\nconst b = 2;");
     expect(result).toEqual(["const a = 1;", "const b = 2;"]);
   });
 });

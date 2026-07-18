@@ -1,4 +1,4 @@
-import { getDiffForFileOrSynthesize, getFileContent } from "./git.js";
+import { getDiffForFileOrSynthesize, getFileContent, resolvePostRef } from "./git.js";
 import { parseFileDiffs, parseHunks, extractSideLines, matchConsecutive, splitAndNormalize, normalizeLine } from "./diff-parser.js";
 import type { Hunk, PositionInput, PositionResult } from "./types.js";
 
@@ -111,8 +111,8 @@ async function tryTextMatch(
     }
   }
 
-  // Fallback: scan full file content.
-  const fileContent = await tryGetFileContent(repo, diffRef, path);
+  // Fallback: scan full file content at the post-change revision.
+  const fileContent = await tryGetFileContent(repo, resolvePostRef(diffRef), path);
   if (fileContent) {
     const match = matchInFileContent(fileContent, targetLines);
     if (match) {
@@ -243,7 +243,7 @@ async function tryFuzzyMatch(
   diffRef: string,
   targetLines: string[]
 ): Promise<PositionResult | null> {
-  const fileContent = await tryGetFileContent(repo, diffRef, path);
+  const fileContent = await tryGetFileContent(repo, resolvePostRef(diffRef), path);
   if (!fileContent) return null;
 
   const fileLines = fileContent.split("\n");

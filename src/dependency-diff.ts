@@ -1,4 +1,4 @@
-import { getFileContent } from "./git.js";
+import { getFileContent, resolvePreRef, resolvePostRef } from "./git.js";
 import type {
   CheckDependencyDiffInput,
   CheckDependencyDiffResult,
@@ -91,30 +91,6 @@ function detectFormat(path: string): "npm" | "pip" | "go" | null {
   return null;
 }
 
-/** Resolve the "before" revision from a diff_ref.
- *  - "HEAD" (workspace mode) → "HEAD" (compare committed state vs worktree)
- *  - "from..to" (range mode) → "from"
- *  - "commit^..commit" (commit mode) → "commit^"
- */
-function resolveBeforeRef(diffRef: string): string {
-  if (diffRef === "HEAD") return "HEAD";
-  const rangeMatch = diffRef.match(/^(.+?)\.\.(.+)$/);
-  if (rangeMatch) return rangeMatch[1];
-  return diffRef;
-}
-
-/** Resolve the "after" revision from a diff_ref.
- *  - "HEAD" (workspace mode) → not used (worktree is read directly)
- *  - "from..to" (range mode) → "to"
- *  - "commit^..commit" (commit mode) → "commit"
- */
-function resolveAfterRef(diffRef: string): string {
-  if (diffRef === "HEAD") return "HEAD";
-  const rangeMatch = diffRef.match(/^(.+?)\.\.(.+)$/);
-  if (rangeMatch) return rangeMatch[2];
-  return diffRef;
-}
-
 function parseManifest(content: string, format: "npm" | "pip" | "go"): Map<string, string> {
   if (format === "npm") return parsePackageJson(content);
   if (format === "pip") return parseRequirementsTxt(content);
@@ -143,8 +119,8 @@ export async function checkDependencyDiff(
     };
   }
 
-  const beforeRef = resolveBeforeRef(diffRef);
-  const afterRef = resolveAfterRef(diffRef);
+  const beforeRef = resolvePreRef(diffRef);
+  const afterRef = resolvePostRef(diffRef);
 
   let beforeContent: string | null = null;
   let afterContent: string | null = null;
@@ -154,20 +130,10 @@ export async function checkDependencyDiff(
   } catch {
     beforeContent = null;
   }
-  // In workspace mode (diffRef === "HEAD"), the "after" state is the worktree
-  // (which may have uncommitted changes). In range/commit mode, read from the ref.
-  if (diffRef === "HEAD") {
-    try {
-      afterContent = await getFileContent(repo, "WORKTREE", path);
-    } catch {
-      afterContent = null;
-    }
-  } else {
-    try {
-      afterContent = await getFileContent(repo, afterRef, path);
-    } catch {
-      afterContent = null;
-    }
+  try {
+    afterContent = await getFileContent(repo, afterRef, path);
+  } catch {
+    afterContent = null;
   }
 
   if (!afterContent) {

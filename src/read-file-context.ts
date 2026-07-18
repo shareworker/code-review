@@ -1,4 +1,4 @@
-import { getFileContent } from "./git.js";
+import { getFileContent, resolvePostRef } from "./git.js";
 import type { ReadFileContextInput, ReadFileContextResult } from "./types.js";
 
 /** Default cap on the number of lines returned. */
@@ -65,10 +65,10 @@ export async function readFileContext(
     }
   }
 
-  // Read file content: try ref first, then worktree (mirrors reflect.ts).
+  // Read file content at the post-change revision (mirrors reflect.ts).
   let fileContent: string | null = null;
   try {
-    const atRef = await getFileContent(repo, diffRef, path);
+    const atRef = await getFileContent(repo, resolvePostRef(diffRef), path);
     fileContent = atRef && atRef.length > 0 ? atRef : null;
   } catch {
     fileContent = null;
