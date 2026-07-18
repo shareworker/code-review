@@ -34,6 +34,8 @@ interface AgentConfig {
   configFile: string;
   skillDir: string;
   configFormat: "json" | "toml";
+  skillFileName?: string;
+  skillFrontmatter?: string;
 }
 
 const MCP_CONFIG_ENTRY = {
@@ -49,6 +51,7 @@ function getAgents(global: boolean): AgentConfig[] {
   const base = global ? homedir() : process.cwd();
   return [
     { name: "claude", dir: path.join(base, ".claude"), configFile: path.join(base, ".claude", "mcp.json"), skillDir: path.join(base, ".claude", "skills", "code-review"), configFormat: "json" },
+    { name: "cursor", dir: path.join(base, ".cursor"), configFile: path.join(base, ".cursor", "mcp.json"), skillDir: path.join(base, ".cursor", "rules"), configFormat: "json", skillFileName: "code-review.mdc", skillFrontmatter: "---\ndescription: Code review guidelines and MCP tool usage for the code-review server\nalwaysApply: false\n---\n\n" },
     { name: "devin", dir: path.join(base, ".devin"), configFile: path.join(base, ".devin", "config.json"), skillDir: path.join(base, ".devin", "skills", "code-review"), configFormat: "json" },
     { name: "codex", dir: path.join(base, ".codex"), configFile: path.join(base, ".codex", "config.toml"), skillDir: path.join(base, ".codex", "skills", "code-review"), configFormat: "toml" },
   ];
@@ -60,7 +63,7 @@ function selectAgents(defaultToAll: boolean, global: boolean) {
     ? process.argv[agentIdx + 1]
     : null;
   if (agentIdx !== -1 && !agentFlag) {
-    console.error("--agent requires a value (claude, devin, or codex)");
+    console.error("--agent requires a value (claude, cursor, devin, or codex)");
     process.exit(1);
   }
 
@@ -73,7 +76,7 @@ function selectAgents(defaultToAll: boolean, global: boolean) {
     return [...agents];
   }
   if (selected.length === 0 && agentFlag) {
-    console.error(`Unknown agent: ${agentFlag}. Supported: claude, devin, codex`);
+    console.error(`Unknown agent: ${agentFlag}. Supported: claude, cursor, devin, codex`);
     process.exit(1);
   }
   return selected;
@@ -88,7 +91,7 @@ function selectAgents(defaultToAll: boolean, global: boolean) {
  * Usage: npx @shareworker/code-review-mcp setup
  *        npx @shareworker/code-review-mcp setup --agent claude
  *        npx @shareworker/code-review-mcp setup --global
- *        npx @shareworker/code-review-mcp setup --global --agent claude
+ *        npx @shareworker/code-review-mcp setup --global --agent cursor
  */
 function setup() {
   const global = isGlobal();
@@ -113,8 +116,10 @@ function setup() {
     // 2. Copy skill.
     try {
       fs.mkdirSync(agent.skillDir, { recursive: true });
-      fs.writeFileSync(path.join(agent.skillDir, "SKILL.md"), skillContent, "utf-8");
-      console.log(`[${agent.name}] Skill installed to ${agent.skillDir}/SKILL.md`);
+      const skillFileName = agent.skillFileName ?? "SKILL.md";
+      const frontmatter = agent.skillFrontmatter ?? "";
+      fs.writeFileSync(path.join(agent.skillDir, skillFileName), frontmatter + skillContent, "utf-8");
+      console.log(`[${agent.name}] Skill installed to ${agent.skillDir}/${skillFileName}`);
     } catch (err: any) {
       console.error(`[${agent.name}] Failed to install skill: ${err?.message ?? err}`);
     }
@@ -204,7 +209,8 @@ function removeTomlConfig(agent: AgentConfig) {
 }
 
 function removeSkill(agent: AgentConfig) {
-  const skillPath = path.join(agent.skillDir, "SKILL.md");
+  const skillFileName = agent.skillFileName ?? "SKILL.md";
+  const skillPath = path.join(agent.skillDir, skillFileName);
   if (!fs.existsSync(skillPath)) return false;
 
   fs.unlinkSync(skillPath);

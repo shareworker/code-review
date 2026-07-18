@@ -148,6 +148,25 @@ describe("setup", () => {
       args: ["-y", "@shareworker/code-review-mcp"],
     });
   });
+
+  it("installs cursor skill as .mdc with frontmatter in .cursor/rules", async () => {
+    const cwd = join(testDir, "cursor-setup");
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+
+    await runCli(cwd, ["setup", "--agent", "cursor"]);
+
+    const configPath = join(cwd, ".cursor", "mcp.json");
+    const skillPath = join(cwd, ".cursor", "rules", "code-review.mdc");
+    expect(await exists(configPath)).toBe(true);
+    expect(await exists(skillPath)).toBe(true);
+    expect(JSON.parse(await readFile(configPath, "utf8")).mcpServers["code-review"]).toEqual({
+      command: "npx",
+      args: ["-y", "@shareworker/code-review-mcp"],
+    });
+    const skillContent = await readFile(skillPath, "utf8");
+    expect(skillContent.startsWith("---\n")).toBe(true);
+    expect(skillContent).toContain("alwaysApply: false");
+  });
 });
 
 describe("uninstall --global", () => {
@@ -174,5 +193,26 @@ describe("uninstall --global", () => {
     });
     expect(await exists(skillPath)).toBe(false);
     expect(await exists(join(fakeHome, ".devin", "skills", "code-review"))).toBe(false);
+  });
+
+  it("removes cursor .mdc skill and MCP config entry", async () => {
+    const cwd = join(testDir, "cursor-uninstall");
+    const configPath = join(cwd, ".cursor", "mcp.json");
+    const skillPath = join(cwd, ".cursor", "rules", "code-review.mdc");
+    await mkdir(join(cwd, ".cursor", "rules"), { recursive: true });
+    await writeFile(configPath, JSON.stringify({
+      mcpServers: {
+        "code-review": { command: "npx", args: ["-y", "@shareworker/code-review-mcp"] },
+        keep: { command: "node", args: ["server.js"] },
+      },
+    }, null, 2));
+    await writeFile(skillPath, "---\nalwaysApply: false\n---\nskill content");
+
+    await runCli(cwd, ["uninstall", "--agent", "cursor"]);
+
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      mcpServers: { keep: { command: "node", args: ["server.js"] } },
+    });
+    expect(await exists(skillPath)).toBe(false);
   });
 });

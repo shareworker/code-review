@@ -9,8 +9,9 @@
 ## English
 
 An MCP server that exposes the deterministic engineering layer of code review as
-tools, callable by host agents (Claude Code, Codex, Devin) within their own LLM
-loops. The server never calls an LLM — all reasoning happens in the host session.
+tools, callable by host agents (Claude Code, Cursor, Codex, Devin) within their
+own LLM loops. The server never calls an LLM — all reasoning happens in the host
+session.
 
 ### Why
 
@@ -74,12 +75,12 @@ That's it. Restart your agent and the `code-review` MCP server is available.
 <details>
 <summary>What does <code>setup</code> do?</summary>
 
-It detects which agents are present (`.claude/`, `.devin/`, `.codex/`) — or checks your home directory when `--global` is used — and for each:
+It detects which agents are present (`.claude/`, `.cursor/`, `.devin/`, `.codex/`) — or checks your home directory when `--global` is used — and for each:
 
 1. Writes the MCP server entry into the agent's config file (merges with existing config)
 2. Copies `SKILL.md` into the agent's skill directory
 
-To set up a specific agent only: `code-review-mcp setup --agent claude`
+To set up a specific agent only: `code-review-mcp setup --agent claude` (also: `cursor`, `devin`, `codex`)
 </details>
 
 ### Uninstall
@@ -113,7 +114,7 @@ It does not remove the agent directory, other skills, `.code-review/rules.json`,
 <details>
 <summary>Manual configuration (if you prefer)</summary>
 
-Add to your agent's MCP config (`.claude/mcp.json` / `.devin/config.json` / `.codex/config.toml`):
+Add to your agent's MCP config (`.claude/mcp.json` / `.cursor/mcp.json` / `.devin/config.json` / `.codex/config.toml`):
 
 ```json
 {
@@ -180,7 +181,7 @@ for global config):
 4. Built-in defaults (lowest) — covers correctness, security, performance,
    maintainability, test coverage
 
-For MVP, only layers 2-4 are active (no `--rule` flag since there's no CLI).
+For MVP, only layers 2-4 are active (the `--rule` flag is not yet exposed via the CLI).
 The first matching user rule replaces the built-in system rule at the same layer.
 
 #### `filters`
@@ -214,7 +215,7 @@ MIT
 ## 中文
 
 一个 MCP 服务器，将代码审查的确定性工程层封装为工具，供宿主代理（Claude Code、
-Codex、Devin）在自身的 LLM 循环中调用。服务器自身不调用任何 LLM —— 所有推理
+Cursor、Codex、Devin）在自身的 LLM 循环中调用。服务器自身不调用任何 LLM —— 所有推理
 都在宿主会话中完成。
 
 ### 为什么需要
@@ -267,12 +268,12 @@ npx @shareworker/code-review-mcp setup --global --agent claude
 <details>
 <summary><code>setup</code> 做了什么？</summary>
 
-检测项目中存在哪些 agent（`.claude/`、`.devin/`、`.codex/`），带 `--global` 时则检测用户主目录，对每个 agent：
+检测项目中存在哪些 agent（`.claude/`、`.cursor/`、`.devin/`、`.codex/`），带 `--global` 时则检测用户主目录，对每个 agent：
 
 1. 将 MCP 服务器配置写入 agent 的配置文件（与已有配置合并）
-2. 将 `SKILL.md` 复制到 agent 的 skill 目录
+2. 将 `SKILL.md` 复制到 agent 的 skill 目录（Cursor 使用 `.cursor/rules/code-review.mdc`）
 
-仅安装指定 agent：`npx @shareworker/code-review-mcp setup --agent claude`
+仅安装指定 agent：`npx @shareworker/code-review-mcp setup --agent claude`（也可：`cursor`、`devin`、`codex`）
 </details>
 
 ### 卸载
@@ -306,7 +307,7 @@ npx @shareworker/code-review-mcp uninstall --global --agent devin
 <details>
 <summary>手动配置（如果你更喜欢）</summary>
 
-将以下内容添加到 agent 的 MCP 配置（`.claude/mcp.json` / `.devin/config.json` / `.codex/config.toml`）：
+将以下内容添加到 agent 的 MCP 配置（`.claude/mcp.json` / `.cursor/mcp.json` / `.devin/config.json` / `.codex/config.toml`）：
 
 ```json
 {
@@ -370,7 +371,7 @@ npx @shareworker/code-review-mcp init-config
 3. `~/.code-review/rules.json` —— 全局/用户级
 4. 内置默认规则（最低）—— 覆盖正确性、安全性、性能、可维护性、测试覆盖率
 
-MVP 版本仅启用 2-4 层（无 CLI 故无 `--rule` 参数）。同一层中首个匹配的用户规则
+MVP 版本仅启用 2-4 层（`--rule` 参数尚未通过 CLI 暴露）。同一层中首个匹配的用户规则
 替换内置系统规则。
 
 #### `filters`
