@@ -12,6 +12,15 @@ import { bundleFiles } from "./bundler.js";
 import { matchRules } from "./rules.js";
 import { positionComment } from "./position.js";
 import { reflectComment } from "./reflect.js";
+import { searchCode } from "./search-code.js";
+import { readFileContext } from "./read-file-context.js";
+import { getLintFindings } from "./lint.js";
+import { scanSecrets } from "./secrets.js";
+import { checkDependencyDiff } from "./dependency-diff.js";
+import { getFileHistoryStats } from "./file-history.js";
+import { runAffectedTests } from "./run-tests.js";
+import { getImporters } from "./importers.js";
+import { dedupeComments } from "./dedupe.js";
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -277,11 +286,11 @@ if (subcommand === "uninstall") {
 }
 
 /**
- * Create and start the MCP server with 5 tools.
+ * Create and start the MCP server with 7 tools.
  */
 async function main() {
   const server = new Server(
-    { name: "code-review-mcp", version: "0.1.3" },
+    { name: "code-review-mcp", version: "0.1.4" },
     { capabilities: { tools: {} } }
   );
 
@@ -340,9 +349,45 @@ async function main() {
         },
       },
       {
+        name: "search_code",
+        description:
+          "Cross-file text-level search via `git grep`. Use to gather evidence before reporting cross-file issues (e.g., confirming a symbol has no other callers). Search source adapts to diff_ref: workspace mode searches the worktree including untracked files; range/commit mode searches the corresponding revision. Results respect .code-review/rules.json filters.exclude.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Literal or extended-regex pattern for git grep -E" },
+            path_glob: { type: "string", description: "Optional glob restricting which paths to search" },
+            max_results: { type: "number", description: "Maximum matches to return (default 50)" },
+            diff_ref: { type: "string", description: "Default HEAD; pass from get_review_targets" },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+          required: ["query", "diff_ref"],
+        },
+      },
+      {
+        name: "read_file_context",
+        description:
+          "Read a bounded slice of a file for cross-file evidence gathering. Two range modes (mutually exclusive): anchor_line + before/after, or start_line + end_line. Reads via the same ref-then-worktree fallback as position_comment/reflect_comment. Caps output at max_lines (default 200).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Repository-relative file path" },
+            diff_ref: { type: "string", description: "Default HEAD; pass from get_review_targets" },
+            anchor_line: { type: "number", description: "Anchor line (1-indexed); use with before/after" },
+            before: { type: "number", description: "Lines before the anchor (default 10)" },
+            after: { type: "number", description: "Lines after the anchor (default 10)" },
+            start_line: { type: "number", description: "Explicit start line (1-indexed); alternative to anchor mode" },
+            end_line: { type: "number", description: "Explicit end line (1-indexed); alternative to anchor mode" },
+            max_lines: { type: "number", description: "Maximum lines to return (default 200)" },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+          required: ["path", "diff_ref"],
+        },
+      },
+      {
         name: "position_comment",
         description:
-          "Locate a comment to precise line numbers. Text matching primary (hunk new-side �?old-side �?full file), hunk alignment fallback. Pass diff_ref from get_review_targets.",
+          "Locate a comment to precise line numbers. Text matching primary (hunk new-side, then old-side, then full file), hunk alignment fallback. Pass diff_ref from get_review_targets.",
         inputSchema: {
           type: "object",
           properties: {
@@ -360,7 +405,7 @@ async function main() {
       {
         name: "reflect_comment",
         description:
-          "Deterministic validation of a positioned comment. Returns keep or drop. Does not call LLM. Three checks: line_in_hunk, existing_code_found, existing_code_in_diff.",
+          "Deterministic validation of a positioned comment. Returns keep or drop. Does not call LLM. Four checks: line_in_hunk, existing_code_found, existing_code_in_diff, evidence_valid. The evidence field is optional — when omitted, evidence_valid passes vacuously (backward compatible).",
         inputSchema: {
           type: "object",
           properties: {
@@ -369,10 +414,130 @@ async function main() {
             start_line: { type: "number", description: "From position_comment" },
             end_line: { type: "number", description: "From position_comment" },
             existing_code: { type: "string", description: "Code snippet the comment references" },
+            evidence: {
+              type: "array",
+              description: "Optional cross-file evidence snippets referenced by the comment. Each entry is validated against its file content.",
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string", description: "Repository-relative path of the evidence file" },
+                  start_line: { type: "number", description: "Optional 1-indexed start line" },
+                  end_line: { type: "number", description: "Optional 1-indexed end line" },
+                  snippet: { type: "string", description: "Verbatim snippet text the comment claims to reference" },
+                },
+                required: ["path", "snippet"],
+              },
+            },
             diff_ref: { type: "string", description: "Default HEAD; pass from get_review_targets" },
             repo: { type: "string", description: "Repo path, default: cwd" },
           },
           required: ["path", "content", "start_line", "end_line"],
+        },
+      },
+      {
+        name: "get_lint_findings",
+        description:
+          "Run project linters (ESLint, tsc, ruff, go vet, cargo clippy) on changed files and return findings as ground-truth signals. Only runs linters that are configured in the repo. Never fails — missing linters return empty findings with a reason.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            files: {
+              type: "array",
+              items: { type: "string" },
+              description: "File paths to lint (from get_review_targets)",
+            },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+          required: ["files"],
+        },
+      },
+      {
+        name: "scan_secrets",
+        description:
+          "Scan added diff lines for hardcoded secrets (AWS keys, private keys, API tokens). Returns findings with masked matched text. Only scans added lines, not context or deleted lines.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            diff_ref: { type: "string", description: "Default HEAD; pass from get_review_targets" },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+          required: ["diff_ref"],
+        },
+      },
+      {
+        name: "check_dependency_diff",
+        description:
+          "Compare a dependency manifest (package.json, requirements.txt, go.mod) before and after a diff_ref. Returns added, removed, and unpinned dependencies. Use to flag supply-chain risks in dependency changes.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Manifest file path (e.g., package.json)" },
+            diff_ref: { type: "string", description: "Default HEAD; pass from get_review_targets" },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "get_file_history_stats",
+        description:
+          "Get commit history statistics for a file: total commits, fix-commit ratio, last modified date. Use to prioritize review attention on frequently-changed or bug-prone files.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Repository-relative file path" },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "run_affected_tests",
+        description:
+          "Execute the project's declared `test` script from package.json. Returns exit code, stdout, stderr, and timeout status. Only runs `npm run test` — does NOT accept arbitrary commands. Default timeout: 60 seconds.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            timeout_ms: { type: "number", description: "Timeout in milliseconds (default 60000)" },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+        },
+      },
+      {
+        name: "get_importers",
+        description:
+          "Find all files that import a given file (reverse dependency lookup). Uses static import/require/export-from parsing. Only processes .ts/.tsx/.js/.jsx/.mjs/.cjs files. Skips node_modules, dist, build directories.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Repository-relative file path" },
+            repo: { type: "string", description: "Repo path, default: cwd" },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "dedupe_comments",
+        description:
+          "Deduplicate review comments by text similarity. Computes Jaccard similarity of normalized content and compares existing_code. Comments with similarity >= threshold (default 0.6) and matching existing_code are considered duplicates. Does NOT call any LLM.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            comments: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string" },
+                  content: { type: "string" },
+                  existing_code: { type: "string" },
+                },
+                required: ["path", "content"],
+              },
+            },
+            similarity_threshold: { type: "number", description: "Default 0.6" },
+          },
+          required: ["comments"],
         },
       },
     ],
@@ -391,10 +556,28 @@ async function main() {
           return await handleGetFileBundle(args, repo);
         case "match_rules":
           return await handleMatchRules(args, repo);
+        case "search_code":
+          return await handleSearchCode(args, repo);
+        case "read_file_context":
+          return await handleReadFileContext(args, repo);
         case "position_comment":
           return await handlePositionComment(args, repo);
         case "reflect_comment":
           return await handleReflectComment(args, repo);
+        case "get_lint_findings":
+          return await handleGetLintFindings(args, repo);
+        case "scan_secrets":
+          return await handleScanSecrets(args, repo);
+        case "check_dependency_diff":
+          return await handleCheckDependencyDiff(args, repo);
+        case "get_file_history_stats":
+          return await handleGetFileHistoryStats(args, repo);
+        case "run_affected_tests":
+          return await handleRunAffectedTests(args, repo);
+        case "get_importers":
+          return await handleGetImporters(args, repo);
+        case "dedupe_comments":
+          return await handleDedupeComments(args, repo);
         default:
           return {
             content: [{ type: "text", text: `Unknown tool: ${name}` }],
@@ -500,6 +683,7 @@ async function handleGetFileBundle(args: any, repo: string) {
             files: b.files,
             total_chars: b.totalChars,
             bundle_reason: b.bundleReason,
+            ...(b.keyDiff ? { key_diff: b.keyDiff } : {}),
           })),
           total_bundles: bundles.length,
         }),
@@ -558,6 +742,7 @@ async function handleReflectComment(args: any, repo: string) {
     startLine: args?.start_line,
     endLine: args?.end_line,
     existingCode: args?.existing_code,
+    evidence: args?.evidence,
     diffRef: args?.diff_ref,
     repo,
   });
@@ -569,6 +754,195 @@ async function handleReflectComment(args: any, repo: string) {
           verdict: result.verdict,
           reason: result.reason,
           checks: result.checks,
+        }),
+      },
+    ],
+  };
+}
+
+async function handleSearchCode(args: any, repo: string) {
+  const result = await searchCode(repo, {
+    query: args?.query,
+    pathGlob: args?.path_glob,
+    maxResults: args?.max_results,
+    diffRef: args?.diff_ref ?? "HEAD",
+    repo,
+  });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          query: result.query,
+          diff_ref: result.diffRef,
+          matches: result.matches,
+          total_matches: result.totalMatches,
+          truncated: result.truncated,
+          ...(result.reason ? { reason: result.reason } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+async function handleReadFileContext(args: any, repo: string) {
+  const result = await readFileContext(repo, {
+    path: args?.path,
+    diffRef: args?.diff_ref ?? "HEAD",
+    anchorLine: args?.anchor_line,
+    before: args?.before,
+    after: args?.after,
+    startLine: args?.start_line,
+    endLine: args?.end_line,
+    maxLines: args?.max_lines,
+    repo,
+  });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          path: result.path,
+          diff_ref: result.diffRef,
+          start_line: result.startLine,
+          end_line: result.endLine,
+          content: result.content,
+          truncated: result.truncated,
+          ...(result.reason ? { reason: result.reason } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+async function handleGetLintFindings(args: any, repo: string) {
+  const files = (args?.files as string[]) ?? [];
+  const result = await getLintFindings(repo, { files });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          tools_run: result.toolsRun,
+          findings: result.findings,
+          total_findings: result.findings.length,
+          ...(result.timedOut ? { timed_out: result.timedOut } : {}),
+          ...(result.reason ? { reason: result.reason } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+async function handleScanSecrets(args: any, repo: string) {
+  const diffRef = (args?.diff_ref as string) ?? "HEAD";
+  const result = await scanSecrets(repo, { diffRef });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          findings: result.findings,
+          total_findings: result.findings.length,
+        }),
+      },
+    ],
+  };
+}
+
+async function handleCheckDependencyDiff(args: any, repo: string) {
+  const manifestPath = args?.path as string;
+  const diffRef = (args?.diff_ref as string) ?? "HEAD";
+  const result = await checkDependencyDiff(repo, { path: manifestPath, diffRef });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          added: result.added,
+          removed: result.removed,
+          unpinned: result.unpinned,
+          ...(result.reason ? { reason: result.reason } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+async function handleGetFileHistoryStats(args: any, repo: string) {
+  const filePath = args?.path as string;
+  const result = await getFileHistoryStats(repo, { path: filePath });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          total_commits: result.totalCommits,
+          last_modified: result.lastModified,
+          fix_commit_ratio: result.fixCommitRatio,
+          ...(result.reason ? { reason: result.reason } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+async function handleRunAffectedTests(args: any, repo: string) {
+  const timeoutMs = args?.timeout_ms as number | undefined;
+  const result = await runAffectedTests(repo, { timeoutMs });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          exit_code: result.exitCode,
+          timed_out: result.timedOut,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ...(result.reason ? { reason: result.reason } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+async function handleGetImporters(args: any, repo: string) {
+  const filePath = args?.path as string;
+  const result = await getImporters(repo, { path: filePath });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          path: result.path,
+          importers: result.importers,
+          total_importers: result.importers.length,
+        }),
+      },
+    ],
+  };
+}
+
+async function handleDedupeComments(args: any, _repo: string) {
+  const comments = (args?.comments as any[]) ?? [];
+  const similarityThreshold = args?.similarity_threshold as number | undefined;
+  const result = dedupeComments({
+    comments: comments.map((c) => ({
+      path: c.path,
+      content: c.content,
+      existingCode: c.existing_code,
+    })),
+    similarityThreshold,
+  });
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          kept: result.kept,
+          dropped: result.dropped,
+          total_kept: result.kept.length,
+          total_dropped: result.dropped.length,
         }),
       },
     ],

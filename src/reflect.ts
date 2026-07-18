@@ -1,17 +1,19 @@
 import { getDiffForFileOrSynthesize, getFileContent } from "./git.js";
 import { parseFileDiffs, getAddedLineNumbers, splitAndNormalize, normalizeLine } from "./diff-parser.js";
-import type { CheckResult, ReflectInput, ReflectResult } from "./types.js";
+import type { CheckResult, EvidenceRef, ReflectInput, ReflectResult } from "./types.js";
 
 /**
  * Deterministic validation of a positioned comment.
  * Returns keep or drop. Does not call LLM.
  *
- * Three checks:
+ * Four checks:
  * 1. line_in_hunk: Are start_line/end_line within the diff hunk's changed line range?
  * 2. existing_code_found: Does the existing_code snippet actually exist in the file?
  *    (not applicable when existing_code is empty/undefined — passes by default)
  * 3. existing_code_in_diff: Is at least one line of existing_code within the diff's changed lines?
  *    (not applicable when existing_code is empty/undefined — passes by default)
+ * 4. evidence_valid: For each cross-file evidence snippet, does it exist in its referenced file?
+ *    (not applicable when evidence is empty/undefined — passes by default)
  *
  * Verdict: any check fails → drop; all pass → keep.
  * Semantic-level reflection is the host LLM's responsibility.
@@ -27,6 +29,7 @@ export async function reflectComment(
     { name: "line_in_hunk", passed: false },
     { name: "existing_code_found", passed: false },
     { name: "existing_code_in_diff", passed: false },
+    { name: "evidence_valid", passed: false },
   ];
 
   // Read the diff for this file.
@@ -66,6 +69,7 @@ export async function reflectComment(
         { name: "line_in_hunk", passed: false },
         { name: "existing_code_found", passed: false },
         { name: "existing_code_in_diff", passed: false },
+        { name: "evidence_valid", passed: false },
       ],
     };
   }
@@ -110,6 +114,9 @@ export async function reflectComment(
     checks[2] = { name: "existing_code_in_diff", passed: inDiff };
   }
 
+  // Check 4: evidence_valid (cross-file evidence snippets).
+  checks[3] = await checkEvidenceValid(input.evidence, repo, diffRef);
+
   // Verdict: any check fails → drop.
   const allPass = checks.every((c) => c.passed);
   return {
@@ -117,6 +124,63 @@ export async function reflectComment(
     reason: allPass ? "passed all checks" : describeFailure(checks),
     checks,
   };
+}
+
+/**
+ * Check 4: evidence_valid.
+ * Validates that every cross-file evidence snippet's `snippet` text actually
+ * exists in the file at its `path`, using the same normalized consecutive-line
+ * matching logic as `checkExistingCodeFound`.
+ *
+ * - evidence undefined or empty array → not applicable → passes.
+ * - any entry missing `path` or `snippet` → that entry fails → check fails.
+ * - any entry's snippet not found in its file → check fails.
+ * - file unreadable (not found at ref or worktree) → that entry fails.
+ */
+async function checkEvidenceValid(
+  evidence: EvidenceRef[] | undefined,
+  repo: string,
+  diffRef: string
+): Promise<CheckResult> {
+  if (!evidence || evidence.length === 0) {
+    return { name: "evidence_valid", passed: true }; // not applicable
+  }
+
+  for (const entry of evidence) {
+    // Field completeness check.
+    if (!entry?.path || typeof entry.path !== "string" ||
+        !entry?.snippet || typeof entry.snippet !== "string" ||
+        entry.snippet.trim() === "") {
+      return { name: "evidence_valid", passed: false };
+    }
+
+    // Read the evidence file (ref-then-worktree fallback, same as the main file).
+    const evidencePath = entry.path.replace(/\\/g, "/");
+    let content: string | null = null;
+    try {
+      const atRef = await getFileContent(repo, diffRef, evidencePath);
+      content = atRef && atRef.length > 0 ? atRef : null;
+    } catch {
+      content = null;
+    }
+    if (content === null) {
+      try {
+        const atWorktree = await getFileContent(repo, "WORKTREE", evidencePath);
+        content = atWorktree && atWorktree.length > 0 ? atWorktree : null;
+      } catch {
+        content = null;
+      }
+    }
+    if (content === null) {
+      return { name: "evidence_valid", passed: false };
+    }
+
+    if (!checkExistingCodeFound(entry.snippet, content)) {
+      return { name: "evidence_valid", passed: false };
+    }
+  }
+
+  return { name: "evidence_valid", passed: true };
 }
 
 /**

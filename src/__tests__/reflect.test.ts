@@ -186,6 +186,154 @@ describe("reflectComment", () => {
     });
     expect(result.verdict).toBe("keep");
   });
+
+  // --- evidence_valid check tests ---
+
+  it("evidence_valid passes vacuously when evidence is not provided (backward compat)", async () => {
+    const result = await reflectComment(repoDir, {
+      path: "src/foo.ts",
+      content: "b should be 20",
+      startLine: 2,
+      endLine: 2,
+      existingCode: "export const b = 20;",
+      diffRef,
+      // no evidence field — must behave identically to pre-evidence behavior
+    });
+    expect(result.verdict).toBe("keep");
+    const evidenceCheck = result.checks.find((c) => c.name === "evidence_valid");
+    expect(evidenceCheck?.passed).toBe(true);
+  });
+
+  it("evidence_valid passes when all evidence snippets exist in their files", async () => {
+    // Create a second file to reference as evidence.
+    const evidenceRepo = await mkdtemp(join(tmpdir(), "ocr-reflect-ev-"));
+    const git = simpleGit(evidenceRepo);
+    await git.init();
+    await git.addConfig("user.email", "test@test.com");
+    await git.addConfig("user.name", "Test");
+    await mkdir(join(evidenceRepo, "src"), { recursive: true });
+    await writeFile(join(evidenceRepo, "src", "main.ts"), "export const a = 1;\n");
+    await writeFile(join(evidenceRepo, "src", "helper.ts"), "export function help() { return 42; }\n");
+    await git.add(".");
+    await git.commit("init");
+    // Modify main.ts so there's a diff to comment on.
+    await writeFile(join(evidenceRepo, "src", "main.ts"), "export const a = 1;\nexport const b = 2;\n");
+    await git.add(".");
+    await git.commit("add b");
+
+    try {
+      const result = await reflectComment(evidenceRepo, {
+        path: "src/main.ts",
+        content: "b duplicates helper's return",
+        startLine: 2,
+        endLine: 2,
+        existingCode: "export const b = 2;",
+        diffRef: "HEAD~1..HEAD",
+        evidence: [
+          {
+            path: "src/helper.ts",
+            snippet: "export function help() { return 42; }",
+          },
+        ],
+      });
+      expect(result.verdict).toBe("keep");
+      const evidenceCheck = result.checks.find((c) => c.name === "evidence_valid");
+      expect(evidenceCheck?.passed).toBe(true);
+    } finally {
+      await rm(evidenceRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("evidence_valid fails when an evidence snippet does not exist in its file", async () => {
+    const evidenceRepo = await mkdtemp(join(tmpdir(), "ocr-reflect-evmiss-"));
+    const git = simpleGit(evidenceRepo);
+    await git.init();
+    await git.addConfig("user.email", "test@test.com");
+    await git.addConfig("user.name", "Test");
+    await mkdir(join(evidenceRepo, "src"), { recursive: true });
+    await writeFile(join(evidenceRepo, "src", "main.ts"), "export const a = 1;\n");
+    await writeFile(join(evidenceRepo, "src", "helper.ts"), "export function help() { return 42; }\n");
+    await git.add(".");
+    await git.commit("init");
+    await writeFile(join(evidenceRepo, "src", "main.ts"), "export const a = 1;\nexport const b = 2;\n");
+    await git.add(".");
+    await git.commit("add b");
+
+    try {
+      const result = await reflectComment(evidenceRepo, {
+        path: "src/main.ts",
+        content: "b duplicates helper's return",
+        startLine: 2,
+        endLine: 2,
+        existingCode: "export const b = 2;",
+        diffRef: "HEAD~1..HEAD",
+        evidence: [
+          {
+            path: "src/helper.ts",
+            snippet: "this snippet does not exist in helper.ts",
+          },
+        ],
+      });
+      expect(result.verdict).toBe("drop");
+      const evidenceCheck = result.checks.find((c) => c.name === "evidence_valid");
+      expect(evidenceCheck?.passed).toBe(false);
+    } finally {
+      await rm(evidenceRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("evidence_valid fails when an evidence entry is missing required fields", async () => {
+    const result = await reflectComment(repoDir, {
+      path: "src/foo.ts",
+      content: "b should be 20",
+      startLine: 2,
+      endLine: 2,
+      existingCode: "export const b = 20;",
+      diffRef,
+      evidence: [
+        // missing snippet
+        { path: "src/foo.ts" } as any,
+      ],
+    });
+    expect(result.verdict).toBe("drop");
+    const evidenceCheck = result.checks.find((c) => c.name === "evidence_valid");
+    expect(evidenceCheck?.passed).toBe(false);
+  });
+
+  it("evidence_valid fails when an evidence file does not exist", async () => {
+    const result = await reflectComment(repoDir, {
+      path: "src/foo.ts",
+      content: "b should be 20",
+      startLine: 2,
+      endLine: 2,
+      existingCode: "export const b = 20;",
+      diffRef,
+      evidence: [
+        {
+          path: "src/nonexistent.ts",
+          snippet: "anything",
+        },
+      ],
+    });
+    expect(result.verdict).toBe("drop");
+    const evidenceCheck = result.checks.find((c) => c.name === "evidence_valid");
+    expect(evidenceCheck?.passed).toBe(false);
+  });
+
+  it("evidence_valid passes when evidence array is empty", async () => {
+    const result = await reflectComment(repoDir, {
+      path: "src/foo.ts",
+      content: "b should be 20",
+      startLine: 2,
+      endLine: 2,
+      existingCode: "export const b = 20;",
+      diffRef,
+      evidence: [],
+    });
+    expect(result.verdict).toBe("keep");
+    const evidenceCheck = result.checks.find((c) => c.name === "evidence_valid");
+    expect(evidenceCheck?.passed).toBe(true);
+  });
 });
 
 // Helper to stage a file in the test repo.

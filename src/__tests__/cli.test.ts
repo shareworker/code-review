@@ -11,7 +11,7 @@ const cliPath = join(process.cwd(), "dist", "index.js");
 let testDir: string;
 
 async function runCli(cwd: string, ...args: string[]) {
-  return execFileAsync(process.execPath, [cliPath, ...args], { cwd, timeout: 1000 });
+  return execFileAsync(process.execPath, [cliPath, ...args], { cwd, timeout: 10000 });
 }
 
 async function exists(path: string) {

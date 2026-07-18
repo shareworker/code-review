@@ -2,16 +2,43 @@ import { getDiffForFileOrSynthesize, getFileContent } from "./git.js";
 import { parseFileDiffs, parseHunks, extractSideLines, matchConsecutive, splitAndNormalize, normalizeLine } from "./diff-parser.js";
 import type { Hunk, PositionInput, PositionResult } from "./types.js";
 
+const FUZZY_MATCH_THRESHOLD = 0.15;
+
+/**
+ * Compute Levenshtein distance between two strings.
+ * Uses a simple dynamic programming approach.
+ */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const prev = new Array(b.length + 1);
+  const curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+  return prev[b.length];
+}
+
 /**
  * Locate a comment to precise line numbers in the target file.
  *
- * Strategy (modeled after open-code-review's resolver.go):
+ * Strategy:
  * 1. Text matching (primary): extract code lines from existing_code/suggestion_code,
  *    normalize, search for consecutive matches. Try hunk new-side first, then
  *    old-side, then full file content.
  * 2. Hunk alignment (fallback): if no code snippet but hint_line is provided,
  *    use hunk line-number mapping to align.
- * 3. Fallback: return 0, 0, "failed".
+ * 3. Fuzzy matching (fallback): if text matching and hunk alignment both fail,
+ *    slide a window over the file content and compute Levenshtein distance
+ *    against the normalized existing_code. Accept if distance/length < threshold.
+ * 4. Fallback: return 0, 0, "failed".
  */
 export async function positionComment(
   repo: string,
@@ -33,6 +60,12 @@ export async function positionComment(
   // Fallback: hunk alignment with hint_line.
   if (input.hintLine && input.hintLine > 0) {
     const result = await tryHunkAlign(repo, path, diffRef, input.hintLine);
+    if (result) return result;
+  }
+
+  // Fallback: fuzzy matching against full file content.
+  if (targetLines.length > 0) {
+    const result = await tryFuzzyMatch(repo, path, diffRef, targetLines);
     if (result) return result;
   }
 
@@ -197,4 +230,54 @@ async function tryHunkAlign(
     }
   }
   return { path, startLine: closest.newStart, endLine: closest.newStart, locatedBy: "hunk_align" };
+}
+
+/**
+ * Try fuzzy matching: slide a window over the file content and compute
+ * Levenshtein distance against the normalized target lines.
+ * Accept if the average distance/length ratio is below the threshold.
+ */
+async function tryFuzzyMatch(
+  repo: string,
+  path: string,
+  diffRef: string,
+  targetLines: string[]
+): Promise<PositionResult | null> {
+  const fileContent = await tryGetFileContent(repo, diffRef, path);
+  if (!fileContent) return null;
+
+  const fileLines = fileContent.split("\n");
+  const normalizedLines: string[] = [];
+  const lineNums: number[] = [];
+  for (let i = 0; i < fileLines.length; i++) {
+    const n = normalizeLine(fileLines[i]);
+    if (n === "") continue;
+    normalizedLines.push(n);
+    lineNums.push(i + 1);
+  }
+  if (normalizedLines.length < targetLines.length) return null;
+
+  const windowSize = targetLines.length;
+
+  for (let i = 0; i <= normalizedLines.length - windowSize; i++) {
+    let totalDist = 0;
+    let totalLen = 0;
+    for (let j = 0; j < windowSize; j++) {
+      const dist = levenshtein(normalizedLines[i + j], targetLines[j]);
+      const maxLen = Math.max(normalizedLines[i + j].length, targetLines[j].length, 1);
+      totalDist += dist;
+      totalLen += maxLen;
+    }
+    const ratio = totalLen > 0 ? totalDist / totalLen : 1;
+    if (ratio < FUZZY_MATCH_THRESHOLD) {
+      return {
+        path,
+        startLine: lineNums[i],
+        endLine: lineNums[i + windowSize - 1],
+        locatedBy: "fuzzy_match",
+      };
+    }
+  }
+
+  return null;
 }

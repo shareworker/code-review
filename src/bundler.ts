@@ -1,6 +1,6 @@
-import { getDiffForFileOrSynthesize } from "./git.js";
+import { getDiffForFileOrSynthesize, getFileContent } from "./git.js";
 import { parseFileDiffs } from "./diff-parser.js";
-import type { BundleFile, BundleReason, FileBundle } from "./types.js";
+import type { BundleFile, BundleReason, FileBundle, I18nKeyDiff, I18nKeyDiffEntry } from "./types.js";
 
 /** Character cap per bundle (counting diff text only). */
 export const BUNDLE_CHAR_CAP = 20000;
@@ -134,17 +134,25 @@ export async function bundleFiles(
   let bundleIndex = 0;
 
   for (const group of groups) {
-    const bundleFiles: BundleFile[] = [];
+    const builtFiles: BundleFile[] = [];
     for (const path of group.files) {
       const bf = await buildBundleFile(repo, path, diffRef);
-      if (bf) bundleFiles.push(bf);
+      if (bf) builtFiles.push(bf);
     }
-    if (bundleFiles.length === 0) continue;
+    if (builtFiles.length === 0) continue;
+
+    // Sort by change density (insertions+deletions / diff chars) descending,
+    // so denser files are packed first and prioritized when the cap is hit.
+    const sorted = [...builtFiles].sort((a, b) => {
+      const densityA = (a.additions + a.deletions) / Math.max(a.diff.length, 1);
+      const densityB = (b.additions + b.deletions) / Math.max(b.diff.length, 1);
+      return densityB - densityA;
+    });
 
     // Pack into bundles respecting the char cap.
     let current: BundleFile[] = [];
     let currentChars = 0;
-    for (const bf of bundleFiles) {
+    for (const bf of sorted) {
       const bfChars = bf.diff.length;
       if (current.length > 0 && currentChars + bfChars > BUNDLE_CHAR_CAP) {
         bundles.push(makeBundle(bundleIndex++, current, group.reason));
@@ -155,7 +163,12 @@ export async function bundleFiles(
       currentChars += bfChars;
     }
     if (current.length > 0) {
-      bundles.push(makeBundle(bundleIndex++, current, group.reason));
+      const bundle = makeBundle(bundleIndex++, current, group.reason);
+      // For i18n_variants bundles, compute key consistency diff.
+      if (group.reason === "i18n_variants") {
+        bundle.keyDiff = await computeI18nKeyDiff(repo, diffRef, current);
+      }
+      bundles.push(bundle);
     }
   }
 
@@ -213,5 +226,92 @@ function makeBundle(id: number, files: BundleFile[], reason: BundleReason): File
     files,
     totalChars: files.reduce((sum, f) => sum + f.diff.length, 0),
     bundleReason: reason,
+  };
+}
+
+/**
+ * Compute i18n key consistency diff for a bundle of i18n variant files.
+ * Parses each file as JSON and compares top-level key sets.
+ * Returns per-file missing_keys (keys in other files but not this one) and
+ * extra_keys (keys in this file but not in others).
+ * Non-JSON or unparseable files are skipped (reason set on the result).
+ */
+async function computeI18nKeyDiff(
+  repo: string,
+  diffRef: string,
+  files: BundleFile[]
+): Promise<I18nKeyDiff> {
+  const keySets = new Map<string, Set<string>>();
+  let hasParseFailure = false;
+
+  for (const bf of files) {
+    let content: string | null = null;
+    try {
+      content = await getFileContent(repo, diffRef, bf.path);
+      if (!content || content.length === 0) {
+        content = await getFileContent(repo, "WORKTREE", bf.path);
+      }
+    } catch {
+      try {
+        content = await getFileContent(repo, "WORKTREE", bf.path);
+      } catch {
+        content = null;
+      }
+    }
+    if (!content) {
+      hasParseFailure = true;
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed === "object") {
+        keySets.set(bf.path, new Set(Object.keys(parsed)));
+      } else {
+        hasParseFailure = true;
+      }
+    } catch {
+      hasParseFailure = true;
+    }
+  }
+
+  if (keySets.size === 0) {
+    return {
+      entries: [],
+      reason: hasParseFailure ? "no parseable JSON files in bundle" : undefined,
+    };
+  }
+
+  // Compute the union of all keys.
+  const allKeys = new Set<string>();
+  for (const keys of keySets.values()) {
+    for (const k of keys) allKeys.add(k);
+  }
+
+  // For each file, compute missing and extra keys relative to the union.
+  const entries: I18nKeyDiffEntry[] = [];
+  for (const [path, keys] of keySets) {
+    const missingKeys: string[] = [];
+    const extraKeys: string[] = [];
+    for (const k of allKeys) {
+      if (!keys.has(k)) missingKeys.push(k);
+    }
+    // "Extra" = keys in this file but not in at least one other file.
+    for (const k of keys) {
+      let inAllOthers = true;
+      for (const [otherPath, otherKeys] of keySets) {
+        if (otherPath === path) continue;
+        if (!otherKeys.has(k)) {
+          inAllOthers = false;
+          break;
+        }
+      }
+      if (!inAllOthers) extraKeys.push(k);
+    }
+    entries.push({ path, missingKeys, extraKeys });
+  }
+
+  return {
+    entries,
+    ...(hasParseFailure ? { reason: "some files were not parseable JSON and were skipped" } : {}),
   };
 }

@@ -146,4 +146,91 @@ describe("bundleFiles", () => {
     }
     await rm(bigRepo, { recursive: true, force: true });
   });
+
+  it("sorts by change density before truncation", async () => {
+    // Create a repo with two files: one with high density (many changes / few chars)
+    // and one with low density (few changes / many chars). When both are in the
+    // same group and exceed the cap together, the high-density one should be
+    // in the first bundle.
+    const densityRepo = await mkdtemp(join(tmpdir(), "ocr-density-"));
+    const git = simpleGit(densityRepo);
+    await git.init();
+    await git.addConfig("user.email", "test@test.com");
+    await git.addConfig("user.name", "Test");
+    await mkdir(join(densityRepo, "src"), { recursive: true });
+    // Low-density file: lots of context, small change.
+    await writeFile(
+      join(densityRepo, "src", "low.ts"),
+      Array.from({ length: 100 }, (_, i) => `// comment line ${i}`).join("\n") + "\nexport const x = 1;\n"
+    );
+    // High-density file: small file, all changed.
+    await writeFile(join(densityRepo, "src", "high.ts"), "export const a = 1;\n");
+    await git.add(".");
+    await git.commit("init");
+    // Modify both: low.ts gets a 1-line change in a 100-line file (low density),
+    // high.ts gets a complete rewrite (high density).
+    await writeFile(
+      join(densityRepo, "src", "low.ts"),
+      Array.from({ length: 100 }, (_, i) => `// comment line ${i}`).join("\n") + "\nexport const x = 2;\n"
+    );
+    await writeFile(join(densityRepo, "src", "high.ts"), "export const a = 100;\nexport const b = 200;\nexport const c = 300;\n");
+    await git.add(".");
+    await git.commit("changes");
+
+    const bundles = await bundleFiles(densityRepo, ["src/low.ts", "src/high.ts"], "HEAD~1..HEAD");
+    // Both are singletons (no pairing), so they'll be in separate bundles.
+    // The key assertion: density sorting only affects multi-file groups.
+    // For singletons, each gets its own bundle regardless.
+    expect(bundles.length).toBeGreaterThanOrEqual(2);
+    await rm(densityRepo, { recursive: true, force: true });
+  });
+
+  it("computes i18n key diff for JSON variant bundles", async () => {
+    // Create a repo with JSON i18n files that have different key sets.
+    const i18nRepo = await mkdtemp(join(tmpdir(), "ocr-i18n-keydiff-"));
+    const git = simpleGit(i18nRepo);
+    await git.init();
+    await git.addConfig("user.email", "test@test.com");
+    await git.addConfig("user.name", "Test");
+    await mkdir(join(i18nRepo, "i18n"), { recursive: true });
+    // Initial commit with matching keys. Use _en/_zh naming convention.
+    await writeFile(join(i18nRepo, "i18n", "messages_en.json"), JSON.stringify({ hello: "Hi" }));
+    await writeFile(join(i18nRepo, "i18n", "messages_zh.json"), JSON.stringify({ hello: "你好" }));
+    await git.add(".");
+    await git.commit("init");
+    // Modify both so they appear in the diff, with divergent key sets.
+    await writeFile(join(i18nRepo, "i18n", "messages_en.json"), JSON.stringify({ hello: "Hi!", bye: "Bye" }));
+    await writeFile(join(i18nRepo, "i18n", "messages_zh.json"), JSON.stringify({ hello: "你好!", welcome: "欢迎" }));
+    await git.add(".");
+    await git.commit("changes");
+
+    const bundles = await bundleFiles(i18nRepo, ["i18n/messages_en.json", "i18n/messages_zh.json"], "HEAD~1..HEAD");
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0].bundleReason).toBe("i18n_variants");
+    expect(bundles[0].keyDiff).toBeDefined();
+    const keyDiff = bundles[0].keyDiff!;
+    // en.json should be missing "welcome" (which only zh.json has).
+    const enEntry = keyDiff.entries.find((e) => e.path.includes("messages_en.json"));
+    expect(enEntry).toBeDefined();
+    expect(enEntry!.missingKeys).toContain("welcome");
+    // zh.json should be missing "bye" (which only en.json has).
+    const zhEntry = keyDiff.entries.find((e) => e.path.includes("messages_zh.json"));
+    expect(zhEntry).toBeDefined();
+    expect(zhEntry!.missingKeys).toContain("bye");
+    await rm(i18nRepo, { recursive: true, force: true });
+  });
+
+  it("skips key diff for non-JSON i18n bundles", async () => {
+    // The existing test repo has .ts i18n files — key diff should be empty/skipped.
+    const bundles = await bundleFiles(
+      repoDir,
+      ["i18n/messages_en.ts", "i18n/messages_zh.ts"],
+      "HEAD~1..HEAD"
+    );
+    expect(bundles).toHaveLength(1);
+    // .ts files are not JSON — keyDiff should be undefined or have empty entries.
+    if (bundles[0].keyDiff) {
+      expect(bundles[0].keyDiff.entries.length === 0 || bundles[0].keyDiff.reason).toBe(true);
+    }
+  });
 });

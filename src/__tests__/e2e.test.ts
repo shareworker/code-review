@@ -10,6 +10,8 @@ import { bundleFiles } from "../bundler.js";
 import { matchRules } from "../rules.js";
 import { positionComment } from "../position.js";
 import { reflectComment } from "../reflect.js";
+import { searchCode } from "../search-code.js";
+import { readFileContext } from "../read-file-context.js";
 
 /**
  * End-to-end integration test: create a test repo with known bugs,
@@ -101,10 +103,9 @@ describe("end-to-end pipeline", () => {
 
   it("step 3a: match_rules returns TS rule for .ts files", async () => {
     const result = await matchRules(repoDir, "src/user.ts");
-    // No rules.json in test repo → built-in default
+    // No rules.json in test repo → built-in language-specific TS/JS rule
     expect(result.usedDefault).toBe(true);
-    expect(result.promptSection).toContain("Correctness");
-    expect(result.promptSection).toContain("Security");
+    expect(result.promptSection).toContain("TypeScript / JavaScript");
   });
 
   it("step 3b: position_comment locates a comment on the SQL injection", async () => {
@@ -172,5 +173,124 @@ describe("end-to-end pipeline", () => {
       diffRef: "HEAD", // workspace mode
     });
     expect(reflected.verdict).toBe("keep");
+  });
+
+  // --- New tools: search_code and read_file_context ---
+
+  it("step 4a: search_code finds cross-file matches in range mode", async () => {
+    const result = await searchCode(repoDir, {
+      query: "getUser",
+      diffRef,
+    });
+    // getUser is defined in user.ts and used in user.test.ts.
+    expect(result.matches.some((m) => m.path === "src/user.ts")).toBe(true);
+    expect(result.matches.some((m) => m.path === "src/user.test.ts")).toBe(true);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("step 4b: search_code respects filters.exclude", async () => {
+    // package.json is in the repo and matches "name" but should be excluded by
+    // DEFAULT_EXCLUDE? Actually package.json is NOT in DEFAULT_EXCLUDE. Let's
+    // verify search finds it, then exclude it explicitly.
+    const before = await searchCode(repoDir, {
+      query: "test-repo",
+      diffRef,
+    });
+    expect(before.matches.some((m) => m.path === "package.json")).toBe(true);
+
+    // Now add an exclude rule and verify it's filtered out.
+    await mkdir(join(repoDir, ".code-review"), { recursive: true });
+    await writeFile(
+      join(repoDir, ".code-review", "rules.json"),
+      JSON.stringify({ filters: { exclude: ["**/package.json"] } })
+    );
+    try {
+      const after = await searchCode(repoDir, {
+        query: "test-repo",
+        diffRef,
+      });
+      expect(after.matches.every((m) => m.path !== "package.json")).toBe(true);
+    } finally {
+      await rm(join(repoDir, ".code-review"), { recursive: true, force: true });
+    }
+  });
+
+  it("step 4c: read_file_context returns anchored context for evidence gathering", async () => {
+    const result = await readFileContext(repoDir, {
+      path: "src/user.ts",
+      diffRef,
+      anchorLine: 1,
+      before: 0,
+      after: 2,
+    });
+    expect(result.startLine).toBe(1);
+    expect(result.content).toContain("getUser");
+    expect(result.truncated).toBe(false);
+  });
+
+  it("step 4d: read_file_context returns explicit range", async () => {
+    const result = await readFileContext(repoDir, {
+      path: "src/auth.ts",
+      diffRef,
+      startLine: 1,
+      endLine: 3,
+    });
+    expect(result.startLine).toBe(1);
+    expect(result.endLine).toBe(3);
+    expect(result.content).toContain("login");
+  });
+
+  it("step 4e: reflect_comment with evidence keeps a comment when evidence exists", async () => {
+    // Comment on user.ts referencing auth.ts's login function as evidence.
+    // Use the changed line (const data = ...) as existingCode so line_in_hunk passes.
+    const positioned = await positionComment(repoDir, {
+      path: "src/user.ts",
+      content: "getUser should check auth via login()",
+      existingCode: "const data = fetch(`/api/users/${id}`);",
+      diffRef,
+    });
+    const reflected = await reflectComment(repoDir, {
+      path: "src/user.ts",
+      content: "getUser should check auth via login()",
+      startLine: positioned.startLine,
+      endLine: positioned.endLine,
+      existingCode: "const data = fetch(`/api/users/${id}`);",
+      diffRef,
+      evidence: [
+        {
+          path: "src/auth.ts",
+          snippet: "export function login(user: string, pass: string): boolean {",
+        },
+      ],
+    });
+    expect(reflected.verdict).toBe("keep");
+    const evidenceCheck = reflected.checks.find((c) => c.name === "evidence_valid");
+    expect(evidenceCheck?.passed).toBe(true);
+  });
+
+  it("step 4f: reflect_comment with evidence drops a comment when evidence snippet is fabricated", async () => {
+    const positioned = await positionComment(repoDir, {
+      path: "src/user.ts",
+      content: "getUser should check auth via login()",
+      existingCode: "const data = fetch(`/api/users/${id}`);",
+      diffRef,
+    });
+    const reflected = await reflectComment(repoDir, {
+      path: "src/user.ts",
+      content: "getUser should check auth via login()",
+      startLine: positioned.startLine,
+      endLine: positioned.endLine,
+      existingCode: "const data = fetch(`/api/users/${id}`);",
+      diffRef,
+      evidence: [
+        {
+          path: "src/auth.ts",
+          snippet: "this function does not exist in auth.ts",
+        },
+      ],
+    });
+    expect(reflected.verdict).toBe("drop");
+    const evidenceCheck = reflected.checks.find((c) => c.name === "evidence_valid");
+    expect(evidenceCheck?.passed).toBe(false);
   });
 });

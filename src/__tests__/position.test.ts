@@ -125,6 +125,41 @@ describe("positionComment", () => {
     expect(result.locatedBy).toBe("failed");
   });
 
+  it("fuzzy matches when existing_code has a small typo", async () => {
+    // "export const a = 1;" vs "export const a = 11;" — 1 char difference, ratio ~0.06
+    const result = await positionComment(repoDir, {
+      path: "src/foo.ts",
+      content: "a should be 1",
+      existingCode: "export const a = 11;",
+      diffRef,
+    });
+    expect(result.locatedBy).toBe("fuzzy_match");
+    expect(result.startLine).toBe(1);
+  });
+
+  it("fuzzy matches with variable rename", async () => {
+    // "export const b = 20;" vs "export const bb = 20;" — small difference
+    const result = await positionComment(repoDir, {
+      path: "src/foo.ts",
+      content: "b should be 20",
+      existingCode: "export const bb = 20;",
+      diffRef,
+    });
+    expect(result.locatedBy).toBe("fuzzy_match");
+    expect(result.startLine).toBe(2);
+  });
+
+  it("returns failed when existing_code is too different for fuzzy match", async () => {
+    // Completely different content — Levenshtein ratio will be high.
+    const result = await positionComment(repoDir, {
+      path: "src/foo.ts",
+      content: "comment",
+      existingCode: "import React from 'react'; const Component = () => null;",
+      diffRef,
+    });
+    expect(result.locatedBy).toBe("failed");
+  });
+
   it("normalizes backslashes in path", async () => {
     const result = await positionComment(repoDir, {
       path: "src\\foo.ts",
