@@ -62,12 +62,19 @@ npx @shareworker/code-review-mcp setup
 npm install -g @shareworker/code-review-mcp; code-review-mcp setup
 ```
 
+To install the agent config and skill into your user home directory instead of the current project:
+
+```bash
+npx @shareworker/code-review-mcp setup --global
+npx @shareworker/code-review-mcp setup --global --agent claude
+```
+
 That's it. Restart your agent and the `code-review` MCP server is available.
 
 <details>
 <summary>What does <code>setup</code> do?</summary>
 
-It detects which agents are present (`.claude/`, `.devin/`, `.codex/`) and for each:
+It detects which agents are present (`.claude/`, `.devin/`, `.codex/`) — or checks your home directory when `--global` is used — and for each:
 
 1. Writes the MCP server entry into the agent's config file (merges with existing config)
 2. Copies `SKILL.md` into the agent's skill directory
@@ -86,6 +93,10 @@ code-review-mcp uninstall --agent devin
 
 # via npx (no global install needed)
 npx @shareworker/code-review-mcp uninstall
+
+# remove from user home directory
+npx @shareworker/code-review-mcp uninstall --global
+npx @shareworker/code-review-mcp uninstall --global --agent devin
 ```
 
 <details>
@@ -244,12 +255,19 @@ npx @shareworker/code-review-mcp setup
 npm install -g @shareworker/code-review-mcp; code-review-mcp setup
 ```
 
+如需把 agent 配置和 skill 安装到用户主目录（而非当前项目）：
+
+```bash
+npx @shareworker/code-review-mcp setup --global
+npx @shareworker/code-review-mcp setup --global --agent claude
+```
+
 完成。重启 agent 即可使用 `code-review` MCP 服务器。
 
 <details>
 <summary><code>setup</code> 做了什么？</summary>
 
-检测项目中存在哪些 agent（`.claude/`、`.devin/`、`.codex/`），对每个 agent：
+检测项目中存在哪些 agent（`.claude/`、`.devin/`、`.codex/`），带 `--global` 时则检测用户主目录，对每个 agent：
 
 1. 将 MCP 服务器配置写入 agent 的配置文件（与已有配置合并）
 2. 将 `SKILL.md` 复制到 agent 的 skill 目录
@@ -268,6 +286,10 @@ code-review-mcp uninstall --agent devin
 
 # 通过 npx（无需全局安装）
 npx @shareworker/code-review-mcp uninstall
+
+# 移除用户主目录中的配置
+npx @shareworker/code-review-mcp uninstall --global
+npx @shareworker/code-review-mcp uninstall --global --agent devin
 ```
 
 <details>

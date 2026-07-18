@@ -10,8 +10,12 @@ const execFileAsync = promisify(execFile);
 const cliPath = join(process.cwd(), "dist", "index.js");
 let testDir: string;
 
-async function runCli(cwd: string, ...args: string[]) {
-  return execFileAsync(process.execPath, [cliPath, ...args], { cwd, timeout: 10000 });
+async function runCli(
+  cwd: string,
+  args: string[],
+  env?: Record<string, string>
+) {
+  return execFileAsync(process.execPath, [cliPath, ...args], { cwd, timeout: 10000, env });
 }
 
 async function exists(path: string) {
@@ -41,7 +45,7 @@ describe("uninstall", () => {
     }, null, 2));
     await writeFile(skillPath, "installed skill");
 
-    await runCli(cwd, "uninstall", "--agent", "devin");
+    await runCli(cwd, ["uninstall", "--agent", "devin"]);
 
     expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
       mcpServers: { keep: { command: "node", args: ["server.js"] } },
@@ -58,7 +62,7 @@ describe("uninstall", () => {
     await mkdir(join(cwd, ".claude"), { recursive: true });
     await writeFile(claudeConfig, JSON.stringify({ mcpServers: { "code-review": { command: "npx" } } }));
 
-    await runCli(cwd, "uninstall", "--agent", "devin");
+    await runCli(cwd, ["uninstall", "--agent", "devin"]);
 
     expect(JSON.parse(await readFile(claudeConfig, "utf8")).mcpServers["code-review"]).toEqual({ command: "npx" });
   });
@@ -83,7 +87,7 @@ describe("uninstall", () => {
     await writeFile(join(skillDir, "SKILL.md"), "installed skill");
     await writeFile(join(skillDir, "LOCAL.md"), "keep this file");
 
-    await runCli(cwd, "uninstall", "--agent", "codex");
+    await runCli(cwd, ["uninstall", "--agent", "codex"]);
 
     const config = await readFile(configPath, "utf8");
     expect(config).toContain("[mcp_servers.keep]");
@@ -98,7 +102,7 @@ describe("uninstall", () => {
     const cwd = join(testDir, "empty");
     await mkdir(cwd, { recursive: true });
 
-    const { stderr } = await runCli(cwd, "uninstall");
+    const { stderr } = await runCli(cwd, ["uninstall"]);
 
     expect(stderr).toBe("");
   });
@@ -111,7 +115,7 @@ describe("uninstall", () => {
     await writeFile(configPath, "{ invalid json");
     await writeFile(skillPath, "installed skill");
 
-    const { stderr } = await runCli(cwd, "uninstall", "--agent", "devin");
+    const { stderr } = await runCli(cwd, ["uninstall", "--agent", "devin"]);
 
     expect(await readFile(configPath, "utf8")).toBe("{ invalid json");
     expect(await exists(skillPath)).toBe(true);
@@ -122,6 +126,53 @@ describe("uninstall", () => {
     const cwd = join(testDir, "unknown");
     await mkdir(cwd, { recursive: true });
 
-    await expect(runCli(cwd, "uninstall", "--agent", "unknown")).rejects.toMatchObject({ code: 1 });
+    await expect(runCli(cwd, ["uninstall", "--agent", "unknown"])).rejects.toMatchObject({ code: 1 });
+  });
+});
+
+describe("setup", () => {
+  it("installs to user home when --global is passed", async () => {
+    const cwd = join(testDir, "global-setup");
+    const fakeHome = join(testDir, "global-home");
+    await mkdir(cwd, { recursive: true });
+    const env = { USERPROFILE: fakeHome, HOME: fakeHome };
+
+    await runCli(cwd, ["setup", "--global", "--agent", "claude"], env);
+
+    const configPath = join(fakeHome, ".claude", "mcp.json");
+    const skillPath = join(fakeHome, ".claude", "skills", "code-review", "SKILL.md");
+    expect(await exists(configPath)).toBe(true);
+    expect(await exists(skillPath)).toBe(true);
+    expect(JSON.parse(await readFile(configPath, "utf8")).mcpServers["code-review"]).toEqual({
+      command: "npx",
+      args: ["-y", "@shareworker/code-review-mcp"],
+    });
+  });
+});
+
+describe("uninstall --global", () => {
+  it("removes the selected agent's config and skill from user home", async () => {
+    const cwd = join(testDir, "global-uninstall");
+    const fakeHome = join(testDir, "global-uninstall-home");
+    const configPath = join(fakeHome, ".devin", "config.json");
+    const skillPath = join(fakeHome, ".devin", "skills", "code-review", "SKILL.md");
+    await mkdir(join(fakeHome, ".devin", "skills", "code-review"), { recursive: true });
+    await writeFile(configPath, JSON.stringify({
+      mcpServers: {
+        "code-review": { command: "npx", args: ["-y", "@shareworker/code-review-mcp"] },
+        keep: { command: "node", args: ["server.js"] },
+      },
+    }, null, 2));
+    await writeFile(skillPath, "installed skill");
+    await mkdir(cwd, { recursive: true });
+    const env = { USERPROFILE: fakeHome, HOME: fakeHome };
+
+    await runCli(cwd, ["uninstall", "--global", "--agent", "devin"], env);
+
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      mcpServers: { keep: { command: "node", args: ["server.js"] } },
+    });
+    expect(await exists(skillPath)).toBe(false);
+    expect(await exists(join(fakeHome, ".devin", "skills", "code-review"))).toBe(false);
   });
 });

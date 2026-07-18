@@ -24,6 +24,7 @@ import { dedupeComments } from "./dedupe.js";
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
+import { homedir } from "os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,13 +41,20 @@ const MCP_CONFIG_ENTRY = {
   args: ["-y", "@shareworker/code-review-mcp"],
 };
 
-const AGENTS: AgentConfig[] = [
-  { name: "claude", dir: ".claude", configFile: ".claude/mcp.json", skillDir: ".claude/skills/code-review", configFormat: "json" },
-  { name: "devin", dir: ".devin", configFile: ".devin/config.json", skillDir: ".devin/skills/code-review", configFormat: "json" },
-  { name: "codex", dir: ".codex", configFile: ".codex/config.toml", skillDir: ".codex/skills/code-review", configFormat: "toml" },
-];
+function isGlobal(): boolean {
+  return process.argv.includes("--global");
+}
 
-function selectAgents(defaultToAll: boolean) {
+function getAgents(global: boolean): AgentConfig[] {
+  const base = global ? homedir() : process.cwd();
+  return [
+    { name: "claude", dir: path.join(base, ".claude"), configFile: path.join(base, ".claude", "mcp.json"), skillDir: path.join(base, ".claude", "skills", "code-review"), configFormat: "json" },
+    { name: "devin", dir: path.join(base, ".devin"), configFile: path.join(base, ".devin", "config.json"), skillDir: path.join(base, ".devin", "skills", "code-review"), configFormat: "json" },
+    { name: "codex", dir: path.join(base, ".codex"), configFile: path.join(base, ".codex", "config.toml"), skillDir: path.join(base, ".codex", "skills", "code-review"), configFormat: "toml" },
+  ];
+}
+
+function selectAgents(defaultToAll: boolean, global: boolean) {
   const agentIdx = process.argv.indexOf("--agent");
   const agentFlag = agentIdx !== -1 && agentIdx + 1 < process.argv.length
     ? process.argv[agentIdx + 1]
@@ -56,12 +64,13 @@ function selectAgents(defaultToAll: boolean) {
     process.exit(1);
   }
 
+  const agents = getAgents(global);
   const selected = agentFlag
-    ? AGENTS.filter((agent) => agent.name === agentFlag)
-    : AGENTS.filter((agent) => fs.existsSync(agent.dir));
+    ? agents.filter((agent) => agent.name === agentFlag)
+    : agents.filter((agent) => fs.existsSync(agent.dir));
   if (selected.length === 0 && !agentFlag && defaultToAll) {
-    console.log("No agent directories detected. Setting up for all supported agents.");
-    return [...AGENTS];
+    console.log(`No agent directories detected${global ? " globally" : ""}. Setting up for all supported agents.`);
+    return [...agents];
   }
   if (selected.length === 0 && agentFlag) {
     console.error(`Unknown agent: ${agentFlag}. Supported: claude, devin, codex`);
@@ -72,13 +81,17 @@ function selectAgents(defaultToAll: boolean) {
 
 /**
  * `setup` subcommand: one-command install.
- * Detects which agents are present in the project, writes MCP config entries,
- * and copies the skill file. Creates agent directories if they don't exist yet.
+ * Detects which agents are present in the project or home directory (when --global),
+ * writes MCP config entries, and copies the skill file. Creates agent directories
+ * if they don't exist yet.
  *
  * Usage: npx @shareworker/code-review-mcp setup
  *        npx @shareworker/code-review-mcp setup --agent claude
+ *        npx @shareworker/code-review-mcp setup --global
+ *        npx @shareworker/code-review-mcp setup --global --agent claude
  */
 function setup() {
+  const global = isGlobal();
   const skillSrc = path.join(__dirname, "..", "skills", "code-review", "SKILL.md");
   if (!fs.existsSync(skillSrc)) {
     console.error(`Skill source not found: ${skillSrc}`);
@@ -86,7 +99,7 @@ function setup() {
   }
   const skillContent = fs.readFileSync(skillSrc, "utf-8");
 
-  const selected = selectAgents(true);
+  const selected = selectAgents(true, global);
 
   for (const agent of selected) {
     // 1. Write MCP config.
@@ -200,9 +213,10 @@ function removeSkill(agent: AgentConfig) {
 }
 
 function uninstall() {
-  const selected = selectAgents(false);
+  const global = isGlobal();
+  const selected = selectAgents(false, global);
   if (selected.length === 0) {
-    console.log("No agent directories detected. Nothing to uninstall.");
+    console.log(`No agent directories detected${global ? " globally" : ""}. Nothing to uninstall.`);
     return;
   }
 
