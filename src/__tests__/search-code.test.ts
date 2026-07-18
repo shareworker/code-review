@@ -173,4 +173,20 @@ describe("searchCode", () => {
     });
     expect(result.matches.every((m) => m.path === "src/foo.ts")).toBe(true);
   });
+
+  it("queries starting with - are treated as patterns, not git grep options", async () => {
+    // Without `-e`, a query like `--version` would be interpreted by git grep as
+    // an option and no search would be performed. With `-e`, it is a pattern.
+    await writeFile(join(repoDir, "src", "dash.ts"), "// --version marker\n");
+    try {
+      const result = await searchCode(repoDir, {
+        query: "--version",
+        diffRef: "HEAD",
+      });
+      expect(result.matches.some((m) => m.path === "src/dash.ts")).toBe(true);
+      expect(result.reason).toBeUndefined();
+    } finally {
+      await rm(join(repoDir, "src", "dash.ts"), { force: true });
+    }
+  });
 });

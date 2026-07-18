@@ -96,4 +96,24 @@ describe("getLintFindings", () => {
     // The "no known config" reason should NOT be set.
     expect(result.reason).not.toMatch(/no known/i);
   });
+
+  it("filters tsc findings to the requested files", async () => {
+    await writeFile(
+      join(repoDir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { noEmit: true, strict: true, skipLibCheck: true },
+        include: ["src/**/*.ts"],
+      })
+    );
+    await mkdir(join(repoDir, "src"), { recursive: true });
+    await writeFile(join(repoDir, "src", "bad.ts"), "const x: number = 'string';\n");
+    await writeFile(join(repoDir, "src", "other.ts"), "const y: number = 'other';\n");
+    const result = await getLintFindings(repoDir, { files: ["src/bad.ts"] });
+    if (result.toolsRun.includes("tsc")) {
+      expect(result.findings.some((f) => f.tool === "tsc" && f.path.includes("bad.ts"))).toBe(true);
+      expect(result.findings.some((f) => f.tool === "tsc" && f.path.includes("other.ts"))).toBe(false);
+    } else {
+      expect(result.reason).toBeDefined();
+    }
+  });
 });
