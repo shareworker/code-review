@@ -1,6 +1,6 @@
 {
   "name": "@shareworker/code-review-mcp",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "MCP server exposing the deterministic engineering layer of code review as tools for host agents (Claude Code, Codex, Devin). The server never calls an LLM.",
   "type": "module",
   "bin": {
