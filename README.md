@@ -63,38 +63,18 @@ This detects which agents are present (`.claude/`, `.cursor/`, `.devin/`, `.code
 writes the MCP config entry, and installs the skill for each. Restart your agent
 and the `code-review` MCP server is available. Works on macOS, Linux, and Windows.
 
-<details>
-<summary>Prefer a global install?</summary>
+Optional flags:
 
-`npx` downloads the package on each run. If you'd rather install it once and call
-`code-review-mcp` directly:
-
-```bash
-npm install -g @shareworker/code-review-mcp
-code-review-mcp setup
-```
-
-This only affects how the package is invoked — the agent config is still written
-to the current project directory.
-</details>
-
-#### Installing to your home directory (`--global`)
-
-By default, `setup` writes to the current project. Pass `--global` to write to
-your user home directory instead, so the MCP server is available across all
-your projects:
+- `--global`: write the MCP config and skill to your user home directory instead of the current project, so the server is available across all your projects
+- `--agent <name>`: set up only the specified agent (`claude`, `cursor`, `devin`, `codex`); can be combined with `--global`
 
 ```bash
-npx @shareworker/code-review-mcp setup --global
 npx @shareworker/code-review-mcp setup --global --agent claude
 ```
 
-To set up a specific agent only (with or without `--global`):
-`setup --agent claude` (also: `cursor`, `devin`, `codex`)
-
 ### Uninstall
 
-Remove this package's project-local MCP entry and installed skill, while preserving other agent configuration and review rules:
+Remove this package's MCP entry and installed skill, while preserving other agent configuration and review rules:
 
 ```bash
 npx @shareworker/code-review-mcp uninstall
@@ -104,8 +84,6 @@ npx @shareworker/code-review-mcp uninstall --agent devin
 npx @shareworker/code-review-mcp uninstall --global
 npx @shareworker/code-review-mcp uninstall --global --agent devin
 ```
-
-If you installed globally, you can use `code-review-mcp uninstall` instead of `npx`.
 
 <details>
 <summary>What does <code>uninstall</code> do?</summary>
@@ -262,35 +240,18 @@ npx @shareworker/code-review-mcp setup
 自动检测项目中存在哪些 agent（`.claude/`、`.cursor/`、`.devin/`、`.codex/`），
 为每个 agent 写入 MCP 配置并安装 skill。重启 agent 即可使用。适用于 macOS、Linux、Windows。
 
-<details>
-<summary>想全局安装 npm 包？</summary>
+可选参数：
 
-`npx` 每次运行都会下载包。如果想安装一次后直接使用 `code-review-mcp` 命令：
-
-```bash
-npm install -g @shareworker/code-review-mcp
-code-review-mcp setup
-```
-
-这只影响包的调用方式——agent 配置仍然写入当前项目目录。
-</details>
-
-#### 安装到用户主目录（`--global`）
-
-默认情况下，`setup` 将配置写入当前项目。加 `--global` 可改为写入用户主目录，
-使 MCP 服务器对所有项目生效：
+- `--global`：将 MCP 配置和 skill 写入用户主目录而非当前项目，使服务器对所有项目生效
+- `--agent <name>`：仅安装指定 agent（`claude`、`cursor`、`devin`、`codex`），可与 `--global` 组合
 
 ```bash
-npx @shareworker/code-review-mcp setup --global
 npx @shareworker/code-review-mcp setup --global --agent claude
 ```
 
-仅安装指定 agent（可与 `--global` 组合）：
-`setup --agent claude`（也可：`cursor`、`devin`、`codex`）
-
 ### 卸载
 
-仅移除本包写入的项目级 MCP 配置和安装的 skill，保留其他 agent 配置与 review 规则：
+移除本包写入的 MCP 配置和安装的 skill，保留其他 agent 配置与 review 规则：
 
 ```bash
 npx @shareworker/code-review-mcp uninstall
@@ -300,8 +261,6 @@ npx @shareworker/code-review-mcp uninstall --agent devin
 npx @shareworker/code-review-mcp uninstall --global
 npx @shareworker/code-review-mcp uninstall --global --agent devin
 ```
-
-如已全局安装，可直接使用 `code-review-mcp uninstall` 代替 `npx`。
 
 <details>
 <summary><code>uninstall</code> 做了什么？</summary>
