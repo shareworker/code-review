@@ -298,6 +298,17 @@ export async function getLintFindings(
     };
   }
 
+  // Normalize the requested file list to repo-relative paths so we can filter
+  // findings from tools that don't support per-file invocation (tsc, go vet,
+  // clippy) while leaving already-file-scoped tools (eslint, ruff) unaffected.
+  const repoPrefix = repoAbs.replace(/\\/g, "/") + "/";
+  const normalizedFiles = new Set(
+    (files ?? []).map((f) => {
+      const nf = f.replace(/\\/g, "/");
+      return nf.startsWith(repoPrefix) ? nf.slice(repoPrefix.length) : nf;
+    })
+  );
+
   const findings: LintFinding[] = [];
   const toolsRun: string[] = [];
   const timedOut: string[] = [];
@@ -315,14 +326,16 @@ export async function getLintFindings(
         maxBuffer: 1024 * 1024 * 10, // 10 MB
       });
       toolsRun.push(tool.name);
-      findings.push(...tool.parse(stdout, stderr));
+      const parsed = tool.parse(stdout, stderr);
+      findings.push(...filterFindings(parsed, normalizedFiles, repoPrefix));
     } catch (err: unknown) {
       const e = err as { killed?: boolean; signal?: string; stdout?: string; stderr?: string; code?: number };
       // Many linters exit non-zero when they find issues — that's not a real error.
       // If stdout is present, parse it anyway.
       if (e.stdout || e.stderr) {
         toolsRun.push(tool.name);
-        findings.push(...tool.parse(e.stdout ?? "", e.stderr ?? ""));
+        const parsed = tool.parse(e.stdout ?? "", e.stderr ?? "");
+        findings.push(...filterFindings(parsed, normalizedFiles, repoPrefix));
       }
       if (e.killed || e.signal === "SIGTERM") {
         timedOut.push(tool.name);
@@ -344,4 +357,18 @@ export async function getLintFindings(
     toolsRun,
     ...(timedOut.length > 0 ? { timedOut } : {}),
   };
+}
+
+/** Filter lint findings to the requested files. Pass-through when no files. */
+function filterFindings(
+  findings: LintFinding[],
+  normalizedFiles: Set<string>,
+  repoPrefix: string
+): LintFinding[] {
+  if (normalizedFiles.size === 0) return findings;
+  return findings.filter((f) => {
+    const nf = f.path.replace(/\\/g, "/");
+    const relPath = nf.startsWith(repoPrefix) ? nf.slice(repoPrefix.length) : nf;
+    return normalizedFiles.has(relPath);
+  });
 }
